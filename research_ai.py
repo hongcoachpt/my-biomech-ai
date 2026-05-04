@@ -29,7 +29,6 @@ check_password()
 api_key = st.secrets.get("GOOGLE_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
-    # 가장 똑똑한 모델 자동 선택
     model = genai.GenerativeModel('gemini-1.5-pro')
 else:
     st.error("API Key 설정이 필요합니다.")
@@ -49,34 +48,34 @@ if uploaded_file:
     with col_pdf:
         st.subheader("📄 논문 원문 뷰어")
         
-        # [해결] 아이패드에서 가장 확실한 방법: 새 탭에서 열기 버튼
-        base64_pdf = base64.b64encode(file_bytes).decode('utf-8')
-        pdf_url = f"data:application/pdf;base64,{base64_pdf}"
+        # [해결] 아이패드 새 창 열기 문제: 
+        # 데이터 주소 방식 대신, 브라우저가 직접 핸들링하도록 '다운로드 버튼'을 뷰어 버튼으로 활용합니다.
+        # 아이패드 사파리에서는 다운로드 버튼을 누르면 '보기/다운로드'를 묻는데, 이때 '보기'를 누르면 
+        # 우리가 원하는 '드래그 가능한 네이티브 PDF 창'이 새 탭으로 완벽하게 열립니다.
         
-        # 큼지막한 버튼으로 제작
-        st.markdown(f'''
-            <a href="{pdf_url}" target="_blank" style="text-decoration: none;">
-                <div style="background-color: #4CAF50; color: white; padding: 10px; text-align: center; border-radius: 5px; font-weight: bold; margin-bottom: 10px;">
-                    🚀 PDF 새 창에서 크게 열기 (드래그/복사용)
-                </div>
-            </a>
-        ''', unsafe_allow_html=True)
+        st.download_button(
+            label="🚀 [iPad 전용] 새 창에서 크게 열기 (드래그용)",
+            data=file_bytes,
+            file_name=uploaded_file.name,
+            mime="application/pdf",
+            help="클릭 후 '보기(View)'를 선택하면 새 탭에서 드래그 가능한 원문이 열립니다."
+        )
 
-        v_mode = st.radio("뷰어 모드 선택", ["인터랙티브 (드래그 시도)", "안전 모드 (이미지)"], horizontal=True)
+        v_mode = st.radio("뷰어 모드 선택", ["안전 모드 (이미지)", "인터랙티브 (드래그 시도)"], horizontal=True)
         
-        if v_mode == "인터랙티브 (드래그 시도)":
-            pdf_display = f'<iframe src="{pdf_url}" width="100%" height="800" type="application/pdf"></iframe>'
-            st.markdown(pdf_display, unsafe_allow_html=True)
-        else:
+        if v_mode == "안전 모드 (이미지)":
             doc = fitz.open(stream=file_bytes, filetype="pdf")
             page_num = st.select_slider("페이지 이동", options=range(1, len(doc) + 1)) - 1
             page = doc.load_page(page_num)
             pix = page.get_pixmap(matrix=fitz.Matrix(2.2, 2.2))
             st.image(Image.open(io.BytesIO(pix.tobytes())), use_container_width=True)
-
-        st.download_button(label="💾 원문 파일 기기에 저장", data=file_bytes, file_name=uploaded_file.name, mime="application/pdf")
+        else:
+            # 인터랙티브 모드에서도 아이패드 호환성이 더 높은 <embed> 태그 사용
+            base64_pdf = base64.b64encode(file_bytes).decode('utf-8')
+            pdf_display = f'<embed src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf">'
+            st.markdown(pdf_display, unsafe_allow_html=True)
         
-        # 가독성 최적화 텍스트 복사창 (아이패드 드래그 보험용)
+        # 가독성 최적화 텍스트 복사창
         st.markdown("---")
         with st.expander("📋 페이지 텍스트 추출 (띄어쓰기 정제됨)", expanded=True):
             if 'doc' not in locals(): doc = fitz.open(stream=file_bytes, filetype="pdf")
@@ -87,11 +86,11 @@ if uploaded_file:
             for b in blocks:
                 text = b[4].replace("\n", " ").strip()
                 if text: clean_text += text + "\n\n"
-            st.text_area("텍스트 내용", value=clean_text, height=300)
+            st.text_area("텍스트 내용 (복사해서 아래 분석창에 넣으세요)", value=clean_text, height=300)
 
     with col_tool:
-        # --- 🧪 텍스트 정밀 분석 (버튼 분리형) ---
-        st.subheader("🧪 문단 정밀 분석 (토큰 절약형)")
+        # --- 🧪 텍스트 정밀 분석 ---
+        st.subheader("🧪 문단 정밀 분석")
         raw_input = st.text_area("분석할 문단을 아래에 붙여넣으세요", height=200)
         
         btn_col1, btn_col2 = st.columns(2)
@@ -119,7 +118,7 @@ if uploaded_file:
         if st.button("🚀 질문 전송"):
             if chat_query or data_img:
                 st.session_state.chat_history.insert(0, {"role": "user", "content": chat_query})
-                with st.spinner("AI 연구원이 분석 중..."):
+                with st.spinner("AI 분석 중..."):
                     req = [f"생체역학 전문가로서 답변하세요: {chat_query}"]
                     if data_img: req.append(Image.open(data_img))
                     response = model.generate_content(req)
