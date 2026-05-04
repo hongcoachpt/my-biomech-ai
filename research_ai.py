@@ -6,6 +6,24 @@ import io
 import base64
 import streamlit.components.v1 as components
 
+# --- 연구실 보안 잠금 설정 ---
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+def check_password():
+    if not st.session_state.authenticated:
+        st.title("🔒 Biomechanics Lab 접속 보안")
+        pwd = st.text_input("연구소 비밀번호를 입력하세요", type="password")
+        if pwd == st.secrets.get("LAB_PASSWORD", "1234"): # 기본값 1234
+            st.session_state.authenticated = True
+            st.rerun()
+        elif pwd:
+            st.error("비밀번호가 틀렸습니다.")
+        st.stop()
+
+check_password()
+# ---------------------------
+
 # 1. 페이지 레이아웃 설정
 st.set_page_config(layout="wide", page_title="Biomechanics Master Lab", page_icon="🔬")
 
