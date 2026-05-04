@@ -1,0 +1,82 @@
+research_ai.py
+import streamlit as st
+import google.generativeai as genai
+import fitz  # PyMuPDF
+from PIL import Image
+import io
+
+# --- 1. 페이지 레이아웃 및 테마 설정 ---
+st.set_page_config(layout="wide", page_title="Biomechanics Paper Analyst", page_icon="🔬")
+
+st.markdown("""
+    <style>
+    .main { background-color: #f8f9fa; }
+    .stTextArea textarea { font-size: 14px !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("🔬 스포츠 생체역학 전문 논문 분석기 (Pro Version)")
+st.caption("스포츠 과학 연구 및 동작분석 데이터를 위한 맞춤형 AI 파트너")
+
+# --- 2. 사이드바: 설정 및 그래프 분석 ---
+with st.sidebar:
+    st.header("⚙️ 설정 및 도구")
+    api_key = st.text_input("Gemini API Key 입력", type="password")
+    
+    st.markdown("---")
+    st.subheader("📊 그래프/표 정밀 분석")
+    graph_image = st.file_uploader("이미지 업로드", type=["png", "jpg", "jpeg"])
+    analyze_graph = st.button("📈 이미지 데이터 분석 실행")
+
+# --- 3. AI 모델 엔진 초기화 ---
+if api_key:
+    genai.configure(api_key=api_key)
+    
+    instruction = """
+    당신은 스포츠 생체역학(Sports Biomechanics) 및 운동역학 분야의 박사급 수석 연구원입니다.
+    연구자가 제공하는 논문 내용을 다음 규칙에 따라 분석하세요:
+    1. 용어: GRF(지면반력), Kinematics/Kinetics, Moment, CoP, EMG 등 전문 용어는 정확한 번역과 원문 병기.
+    2. 문체: 한국 체육학회지 논문 스타일(~함, ~임) 사용.
+    3. 데이터: p-value, Effect size 등 통계적 유의성을 생체역학적 기전과 연결해 해석.
+    4. 연결: 3D 동작분석(Cortex)이나 지면반력기 실험 설계에 어떻게 기여할 수 있는지 제언.
+    """
+    # 할당량 초과가 걱정된다면 나중에 "gemini-1.5-flash"로 변경 가능함
+    model = genai.GenerativeModel(model_name="gemini-1.5-pro", system_instruction=instruction)
+
+    # --- 4. 메인 화면 ---
+    uploaded_pdf = st.file_uploader("분석할 논문 PDF 업로드", type="pdf")
+
+    if uploaded_pdf:
+        col1, col2 = st.columns([1.2, 1])
+
+        with col1:
+            st.subheader("📄 PDF 원문")
+            doc = fitz.open(stream=uploaded_pdf.getvalue(), filetype="pdf")
+            total_pages = len(doc)
+            page_num = st.select_slider("페이지 이동", options=range(1, total_pages + 1)) - 1
+            
+            page = doc.load_page(page_num)
+            pix = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
+            img = Image.open(io.BytesIO(pix.tobytes()))
+            st.image(img, use_container_width=True)
+
+        with col2:
+            st.subheader("💡 라이너(LINER) AI 분석창")
+            user_text = st.text_area("텍스트 입력란", height=300, placeholder="해석이 필요한 문단을 넣어주세요.")
+            
+            if st.button("✨ 전문 분석 및 번역 시작"):
+                if user_text:
+                    with st.spinner("생체역학적 관점으로 분석 중..."):
+                        response = model.generate_content(f"다음 논문 내용을 전문적으로 분석/번역해줘:\n\n{user_text}")
+                        st.markdown("---")
+                        st.markdown(response.text)
+                else:
+                    st.warning("분석할 텍스트를 먼저 입력해 주세요.")
+
+    # --- 5. 사이드바 그래프 분석 ---
+    if analyze_graph and graph_image:
+        img_data = Image.open(graph_image)
+        with st.spinner("그래프 수치 및 경향성 파악 중..."):
+            response = model.generate_content(["이 이미지의 그래프/표 데이터를 해석하고, 생체역학적 의미와 부상 위험 인자를 분석해줘.", img_data])
+            st.sidebar.success("분석 완료!")
+            st.sidebar.markdown(response.text)
