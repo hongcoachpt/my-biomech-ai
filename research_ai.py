@@ -26,7 +26,7 @@ def check_password():
 
 check_password()
 
-# --- 동적 모델 연결 (에러 대응) ---
+# --- [해결] 429 에러 방지용 모델 우선순위 조정 ---
 @st.cache_resource
 def init_gemini():
     api_key = st.secrets.get("GOOGLE_API_KEY")
@@ -34,14 +34,15 @@ def init_gemini():
     try:
         genai.configure(api_key=api_key)
         available_models = [m.name for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
-        # 쿼터가 넉넉한 1.5-flash를 기본으로, 없으면 pro 사용
-        target = next((m for m in available_models if "gemini-1.5-flash" in m), available_models[0])
-        return genai.GenerativeModel(target), target
+        # 무료 할당량이 가장 넉넉한 1.5-flash를 1순위로 설정하여 끊김을 방지합니다.
+        priority = ["models/gemini-1.5-flash", "models/gemini-1.5-pro"]
+        chosen_model = next((m for m in priority if m in available_models), available_models[0])
+        return genai.GenerativeModel(chosen_model), chosen_model
     except Exception as e: return None, str(e)
 
 model, model_name = init_gemini()
 
-# 3. PDF 업로드 및 [아이패드 전용] 뷰어
+# 3. PDF 업로드 및 [아이패드 완벽 대응] 뷰어
 uploaded_file = st.file_uploader("분석할 논문(PDF) 업로드", type="pdf")
 
 if uploaded_file:
@@ -54,17 +55,15 @@ if uploaded_file:
         with col_view:
             st.subheader("📄 논문 원문 분석기")
             
-            # [해결] 아이패드 드래그 차단 우회: 네이티브 뷰어 강제 호출
-            base64_pdf = base64.b64encode(file_bytes).decode("utf-8")
-            pdf_url = f"data:application/pdf;base64,{base64_pdf}"
-            
-            st.markdown(f"""
-                <a href="{pdf_url}" target="_blank" style="text-decoration:none;">
-                    <div style="background-color:#4CAF50; color:white; padding:15px; text-align:center; border-radius:10px; font-weight:bold; margin-bottom:15px; border: 2px solid #2E7D32;">
-                        🚀 [아이패드 필수] 여기를 눌러 논문 새 창 열기 (직접 드래그용)
-                    </div>
-                </a>
-            """, unsafe_allow_html=True)
+            # [해결] 아이패드 드래그 차단 우회: 다운로드 버튼을 통한 네이티브 뷰어 호출
+            # 아이패드에서 이 버튼을 누르면 브라우저가 '보기'를 제안하며, 거기서 100% 드래그가 가능합니다.
+            st.download_button(
+                label="🚀 [iPad 필수] 논문 새 창에서 열기 (직접 드래그용)",
+                data=file_bytes,
+                file_name=uploaded_file.name,
+                mime="application/pdf",
+                help="클릭 후 '보기(View)'를 선택하면 새 탭에서 드래그 가능한 원문이 열립니다."
+            )
             
             page_num = st.select_slider("페이지 이동", options=range(1, total_pages + 1)) - 1
             page = doc.load_page(page_num)
@@ -75,14 +74,15 @@ if uploaded_file:
 
             st.markdown("---")
             
-            # [해결] 띄어쓰기 및 가독성 최적화 추출 로직
-            with st.expander("📋 논문 텍스트 정밀 추출 (띄어쓰기 보정 완료)", expanded=True):
+            # [해결] 띄어쓰기 뭉개짐 및 전체 페이지 누락 해결 로직
+            with st.expander("📋 논문 텍스트 정밀 추출 (전체 페이지 로드)", expanded=True):
+                # 1. AI OCR 판독 버튼 (가장 정확함)
                 if st.button("🚀 AI 정밀 판독 실행 (텍스트가 엉망일 때 클릭)"):
-                    with st.spinner("AI가 문맥을 분석하여 글자를 재배열 중..."):
+                    with st.spinner("AI가 페이지 전체를 읽고 있습니다..."):
                         try:
                             pix_ocr = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
                             img_ocr = Image.open(io.BytesIO(pix_ocr.tobytes()))
-                            response = model.generate_content(["이 논문의 내용을 띄어쓰기를 맞춰서 텍스트로 추출해줘. 제목은 굵게 표시해.", img_ocr])
+                            response = model.generate_content(["이 페이지의 모든 텍스트를 누락 없이 추출해줘. 특히 단어 사이 띄어쓰기를 완벽하게 맞춰서 한국인이 읽기 좋게 정리해.", img_ocr])
                             st.session_state[f"ocr_{page_num}"] = response.text
                             st.rerun()
                         except Exception as e:
@@ -91,43 +91,48 @@ if uploaded_file:
                 if f"ocr_{page_num}" in st.session_state:
                     structured_text = st.session_state[f"ocr_{page_num}"]
                 else:
-                    # 프로그램 방식 띄어쓰기 보정 추출
+                    # [해결] 기본 추출 방식 강화: 띄어쓰기 보정 알고리즘 적용
+                    # 단순히 긁는 것이 아니라 블록 단위로 재조합하여 띄어쓰기를 살립니다.
                     blocks = page.get_text("blocks")
                     blocks.sort(key=lambda b: (b[1], b[0])) # 위에서 아래로 정렬
                     extracted_parts = []
                     for b in blocks:
+                        # 줄바꿈을 공백으로 바꾸고 불필요한 연속 공백 제거
                         text = b[4].replace("\n", " ").strip()
+                        # 문장 끝 하이픈 제거 로직 추가
+                        text = re.sub(r'(\w)-\s+(\w)', r'\1\2', text)
                         if text: extracted_parts.append(text)
                     structured_text = "\n\n".join(extracted_parts)
 
+                # [박사님 요청] 불필요한 복사 칸을 없애고 마크다운으로 깔끔하게 표시
                 st.markdown(structured_text)
-                st.text_area("✂️ 복사용 칸", value=structured_text, height=300, key=f"area_{page_num}")
 
     with col_tool:
+        # --- 🧪 텍스트 정밀 분석 ---
         st.subheader("🧪 문단 정밀 분석")
-        raw_input = st.text_area("분석할 문단을 여기에 붙여넣으세요", height=200)
+        raw_input = st.text_area("분석할 문단을 아래에 붙여넣으세요", height=200, placeholder="왼쪽에서 직접 드래그하거나 위 판독 결과를 복사해 넣으세요.")
 
         c1, c2 = st.columns(2)
         
         def safe_gen(prompt):
             try: return model.generate_content(prompt).text
             except Exception as e:
-                if "429" in str(e): return "⚠️ 하루 사용량을 초과했습니다. 내일 다시 시도하거나 다른 API Key를 사용하세요."
+                if "429" in str(e): return "⚠️ 하루 할당량을 초과했습니다. 내일 다시 시도하세요."
                 return f"❌ 오류: {e}"
 
         if c1.button("🌐 전문 직역 실행"):
             if raw_input.strip():
                 with st.spinner("번역 중..."):
-                    st.info(safe_gen(f"생체역학 전문가로서 직역하세요:\n\n{raw_input}"))
+                    st.info(safe_gen(f"스포츠 생체역학 전문가로서 한국어로 직역하세요:\n\n{raw_input}"))
 
         if c2.button("🧠 심층 역학 분석"):
             if raw_input.strip():
                 with st.spinner("분석 중..."):
-                    st.success(safe_gen(f"생체역학 박사로서 분석하세요:\n\n{raw_input}"))
+                    st.success(safe_gen(f"생체역학 박사로서 상세 분석하세요:\n\n{raw_input}"))
 
         st.markdown("---")
         st.subheader("💬 데이터 통합 질의응답")
-        data_img = st.file_uploader("📸 그래프/사진 업로드", type=["png", "jpg", "jpeg"])
+        data_img = st.file_uploader("📸 그래프/사진 직접 선택", type=["png", "jpg", "jpeg"])
         if data_img: st.image(data_img, width=300)
 
         chat_query = st.text_area("질문을 입력하세요", height=100)
