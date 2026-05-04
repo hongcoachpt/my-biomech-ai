@@ -4,7 +4,6 @@ import fitz  # PyMuPDF
 from PIL import Image
 import io
 import base64
-import re
 
 # 1. 페이지 레이아웃 및 세션 초기화
 st.set_page_config(layout="wide", page_title="Biomechanics Pro Lab", page_icon="🔬")
@@ -31,14 +30,14 @@ def check_password():
 
 check_password()
 
-# 3. 모델 연결 시스템 (쿼터 에러 방어)
+# 3. 모델 연결 시스템
 @st.cache_resource
 def init_gemini():
     api_key = st.secrets.get("GOOGLE_API_KEY")
     if not api_key: return None, "API Key 없음"
     try:
         genai.configure(api_key=api_key)
-        available_models = [m.name for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         priority = ["models/gemini-1.5-flash", "models/gemini-1.5-pro"]
         chosen_model = next((m for m in priority if m in available_models), available_models[0])
         return genai.GenerativeModel(chosen_model), chosen_model
@@ -61,7 +60,6 @@ if uploaded_file:
         with col_view:
             st.subheader("📄 논문 원문 분석기")
             
-            # 아이패드 네이티브 뷰어 호출
             st.download_button(
                 label="🚀 [iPad 필수] 논문 새 창에서 열기 (직접 드래그용)",
                 data=file_bytes,
@@ -77,15 +75,20 @@ if uploaded_file:
 
             st.markdown("---")
             
-            # [핵심] 파트 분리 및 문단 띄어쓰기 추출 섹션
-            with st.expander("📋 논문 텍스트 전체 추출 (파트 및 문단 최적화)", expanded=True):
+            with st.expander("📋 논문 텍스트 전체 추출 (원본 형식 100% 유지)", expanded=True):
                 
-                if st.button("🚀 AI 정밀 판독 실행 (텍스트 구조가 복잡할 때 클릭)"):
-                    with st.spinner("AI가 논문 파트를 나누는 중입니다..."):
+                # 🚀 [수정 1] AI에게도 "원본 그대로 유지하라"고 깐깐하게 명령
+                if st.button("🚀 AI 정밀 판독 실행 (텍스트가 엉망일 때 클릭)"):
+                    with st.spinner("AI가 원본 형태 그대로 문자를 추출 중입니다..."):
                         try:
                             pix_ocr = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
                             img_ocr = Image.open(io.BytesIO(pix_ocr.tobytes()))
-                            prompt = "이 논문 페이지를 읽어줘. 제목이나 소제목(굵은 글씨)을 기점으로 파트를 명확히 나누고, 본문은 문단끼리 띄어쓰기를 잘 지켜서 추출해줘."
+                            prompt = """
+                            이 논문 페이지의 텍스트를 눈에 보이는 그대로 추출해.
+                            1. 굵은 글씨는 마크다운을 써서 똑같이 **굵게**만 표시해. 절대 거대한 제목(###)으로 바꾸지 마.
+                            2. 원본에서 작은 글씨라도 들여쓰기가 되어 있거나 엔터(줄바꿈)가 쳐진 곳은 똑같이 줄을 바꿔줘.
+                            3. 단순히 단 너비가 좁아서 넘어간 줄은 자연스럽게 이어줘.
+                            """
                             response = model.generate_content([prompt, img_ocr])
                             st.session_state[f"ocr_{page_num}"] = response.text
                             st.rerun()
@@ -95,45 +98,45 @@ if uploaded_file:
                 if f"ocr_{page_num}" in st.session_state:
                     final_text = st.session_state[f"ocr_{page_num}"]
                 else:
-                    # 🚀 [수정] 굵은 글씨 기반 파트 분리 및 문단 띄어쓰기 로직
-                    # sort=True를 통해 좌상단부터 순서대로 읽어옵니다.
+                    # 🚀 [수정 2] 파이썬 추출 로직: 굵은 글씨 보존 + 들여쓰기 감지 시 줄바꿈
                     blocks = page.get_text("dict", sort=True)["blocks"]
                     
                     extracted_parts = []
                     for b in blocks:
-                        if b.get("type") != 0: continue # 텍스트 블록만
+                        if b.get("type") != 0: continue
                         
-                        block_text = ""
-                        has_bold_heading = False
+                        block_x0 = b["bbox"][0]
+                        paragraph_text = ""
                         
                         for line in b.get("lines", []):
+                            line_x0 = line["bbox"][0]
+                            
+                            # 들여쓰기 감지 (해당 줄이 시작점보다 10픽셀 이상 우측에서 시작하면 엔터 처리)
+                            if (line_x0 - block_x0) > 10:
+                                if paragraph_text and not paragraph_text.endswith("\n"):
+                                    paragraph_text += "\n"
+                                    
                             line_text = ""
                             for span in line.get("spans", []):
-                                text = span.get("text", "").strip()
-                                if not text: continue
+                                text = span.get("text", "")
+                                if not text.strip(): continue
                                 
-                                # 폰트 속성에서 굵은 글씨(Bold) 감지
-                                # 문단이 짧으면서 굵은 글씨면 제목(파트 구분선)으로 간주
-                                if (span.get("flags", 0) & 2**4) and len(text) < 100:
-                                    has_bold_heading = True
-                                    line_text += f"### **{text}**"
-                                else:
-                                    line_text += text + " "
-                            
-                            block_text += line_text.strip() + " "
-                            
-                        # 단어 쪼개짐(하이픈) 복구
-                        block_text = re.sub(r"([a-zA-Z])-\s+([a-zA-Z])", r"\1\2", block_text).strip()
-                        
-                        if not block_text: continue
+                                # 원본이 굵은 글씨(Bold)면 앞뒤로 ** 를 붙여서 굵게만 만듦
+                                if span.get("flags", 0) & 2**4 or "Bold" in span.get("font", ""):
+                                    stripped_text = text.strip()
+                                    text = text.replace(stripped_text, f"**{stripped_text}**")
+                                    
+                                line_text += text
+                                
+                            # 하이픈 처리 (단어가 끊겼을 때만 이어주고, 나머지는 띄어쓰기)
+                            if line_text.strip().endswith("-"):
+                                paragraph_text += line_text.strip()[:-1]
+                            else:
+                                paragraph_text += line_text.strip() + " "
+                                
+                        extracted_parts.append(paragraph_text.strip())
 
-                        # 굵은 글씨 제목이 있으면 새로운 파트로 시작, 없으면 문단 띄어쓰기 적용
-                        if has_bold_heading:
-                            extracted_parts.append(block_text)
-                        else:
-                            extracted_parts.append(block_text)
-
-                    # 각 덩어리(블록) 사이를 두 줄 바꿈으로 연결하여 문단 구분 명확화
+                    # 각 문단 덩어리(블록)들은 두 줄 바꿈으로 깔끔하게 구분
                     final_text = "\n\n".join(extracted_parts)
 
                 st.markdown(final_text)
