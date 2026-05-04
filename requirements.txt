@@ -1,3 +1,4 @@
-google-generativeai
 streamlit
-pymupdf
+google-generativeai
+PyMuPDF
+Pillow
