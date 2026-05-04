@@ -76,14 +76,14 @@ if uploaded_file:
 
             st.markdown("---")
             
-            with st.expander("📋 논문 텍스트 전체 추출 (2단 편집 자동 인식)", expanded=True):
+            with st.expander("📋 논문 텍스트 전체 추출 (2단 편집 및 폰트 지능형 인식)", expanded=True):
                 
                 if st.button("🚀 AI 정밀 판독 실행 (텍스트 누락 시 클릭)"):
                     with st.spinner("AI가 논문 레이아웃을 분석 중입니다..."):
                         try:
                             pix_ocr = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
                             img_ocr = Image.open(io.BytesIO(pix_ocr.tobytes()))
-                            prompt = "이 논문 페이지를 읽어줘. 왼쪽 단을 위에서 아래로 다 읽고, 그 다음 오른쪽 단을 읽는 논문 형식의 순서를 엄격하게 지켜. 제목이나 굵은 글씨는 마크다운(### **제목**)으로 살려줘."
+                            prompt = "이 논문 페이지를 읽어줘. 왼쪽 단을 위에서 아래로 다 읽고, 그 다음 오른쪽 단을 읽는 논문 형식의 순서를 엄격하게 지켜. 진짜 제목이나 소제목만 굵은 글씨로 살리고, 초록이나 본문은 일반 텍스트로 깔끔하게 정리해줘."
                             response = model.generate_content([prompt, img_ocr])
                             st.session_state[f"ocr_{page_num}"] = response.text
                             st.rerun()
@@ -93,7 +93,7 @@ if uploaded_file:
                 if f"ocr_{page_num}" in st.session_state:
                     final_text = st.session_state[f"ocr_{page_num}"]
                 else:
-                    # 🚀 [핵심] 논문 2단 포맷 맞춤형 정렬 알고리즘
+                    # 논문 2단 포맷 맞춤형 정렬
                     page_width = page.rect.width
                     blocks = page.get_text("dict")["blocks"]
                     text_blocks = [b for b in blocks if b.get("type") == 0]
@@ -102,17 +102,12 @@ if uploaded_file:
                         x0, y0, x1, y1 = block["bbox"]
                         width = x1 - x0
                         center_x = (x0 + x1) / 2
-                        
-                        # 블록 너비가 페이지 너비의 60%를 넘으면 전체 폭(제목, 초록 등)으로 간주
                         is_full_width = width > (page_width * 0.6)
                         
                         if is_full_width:
-                            col = 0 # 전체 폭은 최우선 순위 그룹
+                            col = 0 
                         else:
-                            # 중심축을 기준으로 왼쪽 단(0)과 오른쪽 단(1)을 나눔
                             col = 0 if center_x < (page_width / 2) else 1
-                            
-                        # 단을 기준으로 정렬하되, 같은 단 내에서는 y좌표(높이)로 정렬
                         return (col, y0)
 
                     text_blocks.sort(key=academic_reading_order)
@@ -121,7 +116,8 @@ if uploaded_file:
                     for b in text_blocks:
                         paragraph_text = ""
                         max_size = 0
-                        is_bold = False
+                        bold_char_count = 0
+                        total_char_count = 0
                         
                         for line in b.get("lines", []):
                             for span in line.get("spans", []):
@@ -131,18 +127,32 @@ if uploaded_file:
                                 
                                 paragraph_text += text
                                 max_size = max(max_size, size)
-                                # 폰트 flag 속성에서 비트 연산으로 굵은 글씨(Bold) 판별
+                                text_len = len(text)
+                                total_char_count += text_len
+                                
+                                # 굵은 글씨(Bold) 길이 측정
                                 if flags & 2**4: 
-                                    is_bold = True
-                            paragraph_text += " " # 줄 바꿈 대신 공백으로 문장 이어붙이기
+                                    bold_char_count += text_len
+                            paragraph_text += " "
                             
-                        # 하이픈으로 끊긴 영단어 자동 연결 및 공백 정리
                         paragraph_text = re.sub(r'(\w)-\s+(\w)', r'\1\2', paragraph_text).strip()
-                        
                         if not paragraph_text: continue
                         
-                        # 폰트 크기가 평균 본문(약 10~11)보다 크거나 굵은 글씨면 제목으로 마크업
-                        if max_size > 11.5 or is_bold:
+                        # 🚀 [핵심 수정] 제목 판별 로직 고도화
+                        is_heading = False
+                        text_length = len(paragraph_text)
+                        
+                        # 1. 폰트가 확연히 큰 경우 (대제목)
+                        if max_size >= 13.0:
+                            is_heading = True
+                        # 2. 문단이 짧고(150자 이내), 글자의 절반 이상이 굵은 글씨인 경우 (소제목)
+                        elif text_length > 0 and (bold_char_count / text_length) > 0.5 and text_length < 150:
+                            is_heading = True
+                        # 3. 전부 대문자이면서 짧은 경우 (예: "ABSTRACT", "METHODS")
+                        elif paragraph_text.isupper() and text_length < 100:
+                            is_heading = True
+                            
+                        if is_heading:
                             extracted_parts.append(f"\n### **{paragraph_text}**\n")
                         else:
                             extracted_parts.append(paragraph_text)
