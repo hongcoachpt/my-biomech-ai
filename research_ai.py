@@ -76,14 +76,15 @@ if uploaded_file:
 
             st.markdown("---")
             
-            with st.expander("📋 논문 텍스트 전체 추출 (안정화된 순정 문단 모드)", expanded=True):
+            with st.expander("📋 논문 텍스트 전체 추출 (글자 크기 고정 모드)", expanded=True):
                 
                 if st.button("🚀 AI 정밀 판독 실행 (텍스트가 엉망일 때 클릭)"):
-                    with st.spinner("AI가 원본 형태 그대로 문자를 추출 중입니다..."):
+                    with st.spinner("AI가 텍스트를 추출 중입니다..."):
                         try:
                             pix_ocr = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
                             img_ocr = Image.open(io.BytesIO(pix_ocr.tobytes()))
-                            prompt = "이 논문의 텍스트를 추출해. 문단이 중간에 끊기지 않도록 자연스럽게 이어주고, 굵은 글씨는 마크다운으로 **굵게** 처리해줘."
+                            # [수정] AI에게도 글씨 크기를 키우지 말라고 명확히 지시
+                            prompt = "이 논문의 텍스트를 추출해. 글씨 크기를 키우는 '#' 기호는 절대 쓰지 말고, 제목이나 소제목은 오직 굵은 글씨(**제목**)로만 처리해줘. 문단은 자연스럽게 이어줘."
                             response = model.generate_content([prompt, img_ocr])
                             st.session_state[f"ocr_{page_num}"] = response.text
                             st.rerun()
@@ -93,29 +94,36 @@ if uploaded_file:
                 if f"ocr_{page_num}" in st.session_state:
                     final_text = st.session_state[f"ocr_{page_num}"]
                 else:
-                    # 🚀 [핵심] 가장 기본적이고 안정적인 파이썬 내장 블록 정렬 기능 사용
-                    # sort=True를 통해 알아서 2단 편집을 왼쪽에서 오른쪽으로, 위에서 아래로 정렬합니다.
                     blocks = page.get_text("dict", sort=True)["blocks"]
                     
                     extracted_parts = []
                     for b in blocks:
-                        if b.get("type") != 0: continue # 텍스트 블록만 추출
+                        if b.get("type") != 0: continue 
                         
-                        para_text = "" # 하나의 문단(블록)을 담을 바구니
+                        para_text = "" 
+                        max_size = 0
+                        bold_char_count = 0
+                        total_char_count = 0
                         
                         for line in b.get("lines", []):
                             line_text = ""
                             for span in line.get("spans", []):
                                 text = span.get("text", "")
-                                # 공백만 있는 스팬은 그대로 유지하여 띄어쓰기 보존
                                 if not text.strip(): 
                                     line_text += text
                                     continue
                                 
-                                # 원본이 굵은 글씨(Bold)인지 확인
-                                is_bold = (span.get("flags", 0) & 2**4) or ("Bold" in span.get("font", ""))
+                                size = span.get("size", 0)
+                                flags = span.get("flags", 0)
+                                max_size = max(max_size, size)
+                                
+                                chars = len(text.strip())
+                                total_char_count += chars
+                                
+                                is_bold = (flags & 2**4) or ("Bold" in span.get("font", ""))
                                 if is_bold:
-                                    # 띄어쓰기 훼손 없이 핵심 단어에만 굵게 표시
+                                    bold_char_count += chars
+                                    # 인라인 굵은 글씨 처리
                                     m = re.match(r'^(\s*)(.*?)(\s*)$', text)
                                     if m:
                                         leading, core, trailing = m.groups()
@@ -127,7 +135,6 @@ if uploaded_file:
                             line_text = line_text.strip()
                             if not line_text: continue
                             
-                            # 줄과 줄 사이를 연결 (하이픈으로 끝나는 단어는 이어붙임)
                             if para_text.endswith("-"):
                                 para_text = para_text[:-1] + line_text
                             else:
@@ -137,9 +144,23 @@ if uploaded_file:
                                     para_text = line_text
                                     
                         if para_text.strip():
-                            extracted_parts.append(para_text.strip())
+                            is_heading = False
+                            
+                            if 0 < total_char_count < 150:
+                                if max_size >= 12.0:
+                                    is_heading = True
+                                elif (bold_char_count / total_char_count) > 0.5:
+                                    is_heading = True
+                                elif para_text.replace("**", "").isupper() and total_char_count < 80:
+                                    is_heading = True
+                                    
+                            if is_heading:
+                                # [핵심] ###(글자 확대)를 빼고, 기존의 굵은 표시(**)가 중복되지 않게 정리한 뒤 전체를 굵게 만듦
+                                clean_text = para_text.replace("**", "")
+                                extracted_parts.append(f"**{clean_text}**")
+                            else:
+                                extracted_parts.append(para_text)
 
-                    # 각 문단(블록)들은 엔터 두 번으로 확실히 구분
                     final_text = "\n\n".join(extracted_parts)
 
                 st.markdown(final_text)
