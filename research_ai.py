@@ -31,22 +31,21 @@ def check_password():
 
 check_password()
 
-# 🚀 [박사님 요청] 하이브리드 모델 연결 시스템 (무료 쿼터 선택형)
+# 3. 하이브리드 모델 연결 시스템
 @st.cache_resource
 def get_gemini_model(model_name):
-    """지정된 이름의 제미나이 모델 엔진을 가동합니다."""
     api_key = st.secrets.get("GOOGLE_API_KEY")
     if not api_key: return None
     try:
         genai.configure(api_key=api_key)
+        # 생성 모델 연결
         model = genai.GenerativeModel(model_name)
         return model
     except Exception: return None
 
-# 사이드바에 모델 선택 메뉴 추가
+# 사이드바 엔진 설정
 with st.sidebar:
     st.header("🔬 Lab 엔진 설정")
-    # 박사님이 골라 쓰실 수 있는 두 가지 핵심 무기
     model_choice = st.radio(
         "사용할 AI 엔진을 선택하세요",
         [
@@ -55,14 +54,14 @@ with st.sidebar:
         ]
     )
     
-    # 선택된 라디오 버튼에 따라 실제 내부 모델 이름 매핑
-    chosen_model_name = "models/gemini-1.5-flash" if "Flash" in model_choice else "models/gemini-1.5-pro"
+    # 🚀 [에러 해결 핵심] 이름표에서 "models/"를 빼고 가장 표준적인 명칭으로 변경
+    chosen_model_name = "gemini-1.5-flash" if "Flash" in model_choice else "gemini-1.5-pro"
     
     model = get_gemini_model(chosen_model_name)
     
     st.markdown("---")
     if model:
-        st.success(f"✅ 엔진 가동 중")
+        st.success(f"✅ 엔진 가동 중: {chosen_model_name}")
     else:
         st.error(f"❌ API Key 확인 필요")
     
@@ -83,7 +82,6 @@ if uploaded_file:
         with col_view:
             st.subheader("📄 논문 원문 분석기")
             
-            # [유지] 아이패드 네이티브 뷰어 호출
             st.download_button(
                 label="🚀 [iPad 필수] 논문 새 창에서 열기 (직접 드래그용)",
                 data=file_bytes,
@@ -99,14 +97,12 @@ if uploaded_file:
 
             st.markdown("---")
             
-            # [수정] 텍스트 전체 추출 (가급적 Flash 엔진 권장)
             with st.expander("📋 논문 텍스트 전체 추출 (원본 형식 유지)", expanded=True):
                 
                 btn_ocr = st.button("🚀 AI 정밀 판독 실행 (텍스트가 엉망일 때 클릭)")
                 if btn_ocr:
                     with st.spinner("AI가 원본 형태 그대로 문자를 추출 중입니다..."):
                         try:
-                            # 현재 선택된 모델(Flash or Pro)을 사용하여 텍스트 추출
                             pix_ocr = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
                             img_ocr = Image.open(io.BytesIO(pix_ocr.tobytes()))
                             prompt = """이 학술 논문 페이지의 텍스트를 보이는 그대로 추출해. 제목이나 소제목은 굵은 글씨로 마크다운(**제목**) 처리하고, 작은 글씨라도 들여쓰기나 엔터(줄바꿈)가 쳐진 곳은 그대로 줄을 바꿔줘."""
@@ -119,7 +115,6 @@ if uploaded_file:
                 if f"ocr_{page_num}" in st.session_state:
                     final_text = st.session_state[f"ocr_{page_num}"]
                 else:
-                    # 기본 파이썬 추출 로직 (무료 API 전혀 사용 안 함)
                     blocks = page.get_text("dict", sort=True)["blocks"]
                     extracted_parts = []
                     for b in blocks:
@@ -138,27 +133,23 @@ if uploaded_file:
                 st.markdown(final_text)
 
     with col_tool:
-        # --- 🧪 정밀 분석 도구 (여기서 Flash/Pro 선택 효율 극대화) ---
         st.subheader("🧪 문단 정밀 분석")
         raw_input = st.text_area("분석할 문단을 여기에 붙여넣으세요", height=200, placeholder="왼쪽에서 추출된 텍스트를 복사해 넣으세요.")
 
         c1, c2 = st.columns(2)
         
-        # 429 할당량 에러 대응용 안전 판독 함수
         def safe_gen(prompt):
             try: return model.generate_content(prompt).text
             except Exception as e:
-                if "429" in str(e): return "🛑 현재 모델의 하루 무료 할당량을 모두 소진했습니다. 왼쪽에서 다른 모델 엔진을 선택해보세요."
+                if "429" in str(e): return "🛑 현재 모델의 하루 무료 할당량을 모두 소진했습니다. 왼쪽 메뉴에서 Flash 모델로 변경해보세요."
                 return f"❌ 오류: {e}"
 
-        # 가벼운 번역은 가급적 Flash로 유도
         if c1.button("🌐 전문 직역 실행"):
             if raw_input.strip():
                 with st.spinner("번역 중..."):
                     prompt = f"당신은 스포츠 생체역학 전문가입니다. 아래 논문 문단을 한국어로 자연스럽게 직역하세요. 문맥이 매끄러워야 합니다:\n\n{raw_input}"
                     st.info(safe_gen(prompt))
 
-        # 깊은 역학 분석은 아껴둔 Pro 모델 사용 권장
         if c2.button("🧠 심층 역학 분석"):
             if raw_input.strip():
                 with st.spinner("생체역학 전문 분석 중..."):
@@ -170,7 +161,6 @@ if uploaded_file:
                     st.success(safe_gen(prompt))
 
         st.markdown("---")
-        # 💬 데이터 통합 질의응답 (이미지 분석은 가급적 Pro 모델 권장)
         st.subheader("💬 데이터 및 이미지 질의응답")
         data_img = st.file_uploader("📸 사진 업로드 (그래프, 표)", type=["png", "jpg", "jpeg"])
         if data_img: st.image(data_img, width=300)
