@@ -5,8 +5,8 @@ from PIL import Image
 import io
 import base64
 
-# 1. 페이지 레이아웃 및 보안 설정 (기존 유지)
-st.set_page_config(layout="wide", page_title="Biomechanics Pro Lab", page_icon="🔬")
+# 1. 페이지 및 보안 설정 (기존 유지)
+st.set_page_config(layout="wide", page_title="Biomechanics Interactive Lab", page_icon="🔬")
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -24,81 +24,72 @@ def check_password():
 
 check_password()
 
+# API 인증
 api_key = st.secrets.get("GOOGLE_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-1.5-pro')
 else:
-    st.error("API Key 설정이 필요합니다.")
+    st.error("Secrets에서 GOOGLE_API_KEY 설정을 확인하세요.")
     st.stop()
 
 if "chat_history" not in st.session_state: st.session_state.chat_history = []
 
-st.title("🔬 스마트 생체역학 연구실")
+st.title("🔬 인터랙티브 생체역학 연구실")
 
-# 3. PDF 업로드 및 [인-앱 드래그 전용] 뷰어
+# 3. PDF 업로드 및 [직접 드래그] 뷰어
 uploaded_file = st.file_uploader("논문(PDF) 업로드", type="pdf")
 
 if uploaded_file:
-    # 아이패드 화면을 넓게 쓰기 위해 5:5 분할
-    col_view, col_tool = st.columns([1, 1])
+    # 아이패드에서 드래그 공간을 확보하기 위해 넓게 배치
+    col_pdf, col_tool = st.columns([1.2, 1])
     file_bytes = uploaded_file.getvalue()
     
-    with col_view:
-        st.subheader("📄 논문 드래그 구역")
+    with col_pdf:
+        st.subheader("📄 논문 원문 (직접 드래그 구역)")
         
-        # PDF 로드
-        doc = fitz.open(stream=file_bytes, filetype="pdf")
-        total_pages = len(doc)
-        page_num = st.select_slider("페이지 이동", options=range(1, total_pages + 1)) - 1
-        page = doc.load_page(page_num)
+        # [핵심] 아이패드 네이티브 드래그를 유도하는 <object> 방식
+        base64_pdf = base64.b64encode(file_bytes).decode('utf-8')
         
-        # [핵심] 아이패드에서 드래그가 가장 잘 되는 '텍스트 레이어' 모드
-        # 원본 PDF를 이미지로 띄우고 그 아래/옆에 '진짜 긁히는 글자'를 배치합니다.
-        pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
-        st.image(Image.open(io.BytesIO(pix.tobytes())), use_container_width=True, caption=f"{page_num + 1} / {total_pages} Page")
-        
-        # 이 부분이 아이패드에서 '앱 상에서 바로 드래그'하는 핵심 버튼입니다.
-        st.info("💡 아래 텍스트 박스에서 원하는 문단을 드래그하여 복사하세요.")
-        
-        # 텍스트 가독성 및 정렬 알고리즘
-        blocks = page.get_text("blocks")
-        blocks.sort(key=lambda b: (b[1], b[0]))
-        clean_text = ""
-        for b in blocks:
-            text = b[4].replace("\n", " ").strip()
-            if text: clean_text += text + "\n\n"
-        
-        # 아이패드 사용자를 위해 높이를 크게 잡은 드래그 전용 창
-        # 이 창은 앱 내부에 박혀 있어 바로 보면서 긁기 좋습니다.
-        st.text_area("↓↓↓ 여기서 바로 드래그하세요 ↓↓↓", value=clean_text, height=500, key="drag_area")
+        # 아이패드 사파리가 PDF 엔진을 직접 가동하게 만드는 HTML5 코드입니다.
+        pdf_display = f"""
+            <object data="data:application/pdf;base64,{base64_pdf}#toolbar=0&navpanes=0&scrollbar=0" 
+                    type="application/pdf" 
+                    width="100%" 
+                    height="1000px" 
+                    style="border: 2px solid #eee; border-radius: 10px;">
+                <p>이 브라우저는 PDF 직접 드래그를 지원하지 않습니다. 
+                <a href="data:application/pdf;base64,{base64_pdf}" target="_blank">여기를 눌러 새 탭에서 열기</a>를 이용하세요.</p>
+            </object>
+        """
+        st.markdown(pdf_display, unsafe_allow_html=True)
+        st.caption("💡 팁: 드래그가 안 되면 주소창 옆 'AA' 버튼을 눌러 '데스크탑 웹사이트 요청'을 켜주세요.")
 
     with col_tool:
-        # --- 분석 도구 (버튼 분리형) ---
+        # --- 분석 도구 ---
         st.subheader("🧪 문단 정밀 분석")
-        raw_input = st.text_area("위에서 드래그한 내용을 여기에 붙여넣으세요", height=200)
+        raw_input = st.text_area("왼쪽 PDF에서 드래그한 내용을 붙여넣으세요", height=200, placeholder="여기에 Paste!")
         
         c1, c2 = st.columns(2)
         if c1.button("🌐 전문 직역"):
             if raw_input:
-                with st.spinner("번역 중..."):
+                with st.spinner("직역 중..."):
                     res = model.generate_content(f"생체역학 전문 번역: {raw_input}").text
                     st.info(res)
+        
         if c2.button("🧠 역학 분석"):
             if raw_input:
-                with st.spinner("분석 중..."):
-                    res = model.generate_content(f"Kinetics/Kinematics 기전 분석: {raw_input}").text
+                with st.spinner("기전 분석 중..."):
+                    res = model.generate_content(f"Kinetics/Kinematics 관점 분석: {raw_input}").text
                     st.success(res)
 
         st.markdown("---")
-        st.subheader("💬 데이터 및 이미지 질의응답")
-        
-        # 아이패드 사진첩/캡처 대응 업로더
-        data_img = st.file_uploader("📸 그래프 캡처본 업로드 (사진첩)", type=["png", "jpg", "jpeg"])
+        st.subheader("💬 데이터 및 이미지 분석")
+        data_img = st.file_uploader("📸 그래프/사진 업로드", type=["png", "jpg", "jpeg"])
         if data_img: st.image(data_img, width=300)
 
         chat_query = st.text_area("질문을 입력하세요", height=100)
-        if st.button("🚀 질문 및 데이터 분석 전송"):
+        if st.button("🚀 분석 전송"):
             if chat_query or data_img:
                 st.session_state.chat_history.insert(0, {"role": "user", "content": chat_query})
                 with st.spinner("AI 분석 중..."):
