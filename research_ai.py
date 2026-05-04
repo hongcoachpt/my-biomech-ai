@@ -4,8 +4,9 @@ import fitz  # PyMuPDF
 from PIL import Image
 import io
 import base64
+import re
 
-# 1. 페이지 레이아웃 및 세션 초기화
+# 1. 페이지 설정
 st.set_page_config(layout="wide", page_title="Biomechanics Pro Lab", page_icon="🔬")
 
 if "chat_history" not in st.session_state:
@@ -75,20 +76,15 @@ if uploaded_file:
 
             st.markdown("---")
             
-            with st.expander("📋 논문 텍스트 전체 추출 (원본 형식 100% 유지)", expanded=True):
+            with st.expander("📋 논문 텍스트 전체 추출 (원본 양식 100% 거울 복사)", expanded=True):
                 
-                # 🚀 [수정 1] AI에게도 "원본 그대로 유지하라"고 깐깐하게 명령
+                # AI 백업 판독기 (명령어 단순화)
                 if st.button("🚀 AI 정밀 판독 실행 (텍스트가 엉망일 때 클릭)"):
-                    with st.spinner("AI가 원본 형태 그대로 문자를 추출 중입니다..."):
+                    with st.spinner("AI가 눈에 보이는 그대로 문자를 추출 중입니다..."):
                         try:
                             pix_ocr = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
                             img_ocr = Image.open(io.BytesIO(pix_ocr.tobytes()))
-                            prompt = """
-                            이 논문 페이지의 텍스트를 눈에 보이는 그대로 추출해.
-                            1. 굵은 글씨는 마크다운을 써서 똑같이 **굵게**만 표시해. 절대 거대한 제목(###)으로 바꾸지 마.
-                            2. 원본에서 작은 글씨라도 들여쓰기가 되어 있거나 엔터(줄바꿈)가 쳐진 곳은 똑같이 줄을 바꿔줘.
-                            3. 단순히 단 너비가 좁아서 넘어간 줄은 자연스럽게 이어줘.
-                            """
+                            prompt = "이 논문의 텍스트를 원본 생긴 그대로 추출해. 굵은 글씨는 마크다운으로 **굵게** 처리하고, 들여쓰기와 줄바꿈, 띄어쓰기를 원본과 100% 똑같이 유지해."
                             response = model.generate_content([prompt, img_ocr])
                             st.session_state[f"ocr_{page_num}"] = response.text
                             st.rerun()
@@ -98,7 +94,7 @@ if uploaded_file:
                 if f"ocr_{page_num}" in st.session_state:
                     final_text = st.session_state[f"ocr_{page_num}"]
                 else:
-                    # 🚀 [수정 2] 파이썬 추출 로직: 굵은 글씨 보존 + 들여쓰기 감지 시 줄바꿈
+                    # 🚀 [핵심] 오직 '물리적 좌표'만을 믿는 정직한 추출 로직
                     blocks = page.get_text("dict", sort=True)["blocks"]
                     
                     extracted_parts = []
@@ -111,32 +107,49 @@ if uploaded_file:
                         for line in b.get("lines", []):
                             line_x0 = line["bbox"][0]
                             
-                            # 들여쓰기 감지 (해당 줄이 시작점보다 10픽셀 이상 우측에서 시작하면 엔터 처리)
+                            # [원칙 1] 들여쓰기 보존: 현재 줄이 문단 시작점보다 10픽셀 이상 들어가 있으면 무조건 새 문단(줄바꿈 2번) 처리
                             if (line_x0 - block_x0) > 10:
-                                if paragraph_text and not paragraph_text.endswith("\n"):
-                                    paragraph_text += "\n"
+                                if paragraph_text and not paragraph_text.endswith("\n\n"):
+                                    paragraph_text += "\n\n"
                                     
-                            line_text = ""
+                            line_string = ""
+                            prev_x1 = -1 # 이전 글자의 끝 좌표
+                            
                             for span in line.get("spans", []):
                                 text = span.get("text", "")
-                                if not text.strip(): continue
+                                if not text: continue
                                 
-                                # 원본이 굵은 글씨(Bold)면 앞뒤로 ** 를 붙여서 굵게만 만듦
-                                if span.get("flags", 0) & 2**4 or "Bold" in span.get("font", ""):
-                                    stripped_text = text.strip()
-                                    text = text.replace(stripped_text, f"**{stripped_text}**")
-                                    
-                                line_text += text
+                                current_x0 = span["bbox"][0]
                                 
-                            # 하이픈 처리 (단어가 끊겼을 때만 이어주고, 나머지는 띄어쓰기)
-                            if line_text.strip().endswith("-"):
-                                paragraph_text += line_text.strip()[:-1]
+                                # [원칙 2] 띄어쓰기 강제 보존: 이전 글자 끝과 현재 글자 시작이 3픽셀 이상 벌어져 있으면 무조건 스페이스바 추가
+                                if prev_x1 != -1 and (current_x0 - prev_x1) > 3:
+                                    if not line_string.endswith(" ") and not text.startswith(" "):
+                                        line_string += " "
+                                
+                                # [원칙 3] 굵은 글씨 보존: 띄어쓰기 손상 없이 굵기만 추가
+                                is_bold = (span.get("flags", 0) & 2**4) or ("Bold" in span.get("font", ""))
+                                if is_bold:
+                                    # 정규식으로 앞뒤 공백을 분리한 후 핵심 단어에만 ** 부착
+                                    m = re.match(r'^(\s*)(.*?)(\s*)$', text)
+                                    if m:
+                                        leading, core, trailing = m.groups()
+                                        if core:
+                                            text = f"{leading}**{core}**{trailing}"
+                                
+                                line_string += text
+                                prev_x1 = span["bbox"][2]
+                                
+                            # 하이픈(-)으로 끝나는 단어는 이어주고, 아니면 띄어쓰기 추가
+                            if line_string.rstrip().endswith("-"):
+                                paragraph_text += line_string.rstrip()[:-1]
                             else:
-                                paragraph_text += line_text.strip() + " "
+                                if not line_string.endswith(" "):
+                                    line_string += " "
+                                paragraph_text += line_string
                                 
                         extracted_parts.append(paragraph_text.strip())
 
-                    # 각 문단 덩어리(블록)들은 두 줄 바꿈으로 깔끔하게 구분
+                    # 각 블록(원본 상의 큰 문단) 사이는 엔터 두 번으로 확실히 띄워줌
                     final_text = "\n\n".join(extracted_parts)
 
                 st.markdown(final_text)
@@ -150,18 +163,18 @@ if uploaded_file:
         def safe_gen(prompt):
             try: return model.generate_content(prompt).text
             except Exception as e:
-                if "429" in str(e): return "⚠️ 할당량 초과입니다. 잠시 후 시도하세요."
+                if "429" in str(e): return "⚠️ 하루 사용량을 초과했습니다."
                 return f"❌ 오류: {e}"
 
         if c1.button("🌐 전문 직역 실행"):
             if raw_input.strip():
                 with st.spinner("번역 중..."):
-                    st.info(safe_gen(f"스포츠 생체역학 전문가로서 한국어로 자연스럽게 직역하세요:\n\n{raw_input}"))
+                    st.info(safe_gen(f"스포츠 생체역학 전문가로서 직역하세요:\n\n{raw_input}"))
 
         if c2.button("🧠 심층 역학 분석"):
             if raw_input.strip():
                 with st.spinner("분석 중..."):
-                    st.success(safe_gen(f"스포츠 생체역학 박사로서 상세 분석하세요:\n\n{raw_input}"))
+                    st.success(safe_gen(f"생체역학 박사로서 상세 분석하세요:\n\n{raw_input}"))
 
         st.markdown("---")
         st.subheader("💬 데이터 및 이미지 질의응답")
