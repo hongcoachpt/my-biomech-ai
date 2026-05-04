@@ -76,18 +76,17 @@ if uploaded_file:
 
             st.markdown("---")
             
-            with st.expander("📋 논문 텍스트 전체 추출 (단/사이드바 분리 알고리즘 적용)", expanded=True):
+            with st.expander("📋 논문 텍스트 전체 추출 (단/사이드바 분리 및 문단 감지)", expanded=True):
                 
-                # 🚀 [수정] AI에게 논문의 논리적 구조를 파악하도록 프롬프트 고도화
                 if st.button("🚀 AI 정밀 판독 실행 (텍스트가 엉망일 때 클릭)"):
                     with st.spinner("AI가 논문의 읽기 순서를 분석하여 추출 중입니다..."):
                         try:
                             pix_ocr = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
                             img_ocr = Image.open(io.BytesIO(pix_ocr.tobytes()))
                             prompt = """
-                            이 이미지는 학술 논문 페이지입니다. 사이드바(저작권, 날짜, 에디터 정보 등)와 메인 본문(제목, 초록, 서론 등)이 나뉘어 있을 수 있습니다. 
-                            사람이 논문을 읽는 논리적인 순서(메인 제목 -> 저자 -> 초록 -> 본문)대로 텍스트를 추출해 주세요. 중요하지 않은 사이드바 정보는 맨 마지막에 빼주세요. 
-                            진짜 제목이나 소제목만 마크다운(### **제목**)으로 굵게 처리하고, 초록이나 일반 본문은 내용에 굵은 글씨가 섞여 있어도 절대 제목 처리하지 말고 일반 텍스트로 출력하세요.
+                            이 이미지는 학술 논문 페이지입니다. 사이드바와 메인 본문이 나뉘어 있을 수 있습니다. 
+                            논리적인 순서대로 텍스트를 추출해 주세요. 진짜 제목이나 소제목만 마크다운(### **제목**)으로 굵게 처리하고, 초록이나 일반 본문은 내용에 굵은 글씨가 섞여 있어도 일반 텍스트로 출력하세요. 
+                            특히 '문단 간격(띄어쓰기)'을 원본과 똑같이 명확하게 구분해 주세요.
                             """
                             response = model.generate_content([prompt, img_ocr])
                             st.session_state[f"ocr_{page_num}"] = response.text
@@ -98,48 +97,64 @@ if uploaded_file:
                 if f"ocr_{page_num}" in st.session_state:
                     final_text = st.session_state[f"ocr_{page_num}"]
                 else:
-                    # 🚀 [수정] 파이썬 추출 로직: x좌표를 그룹화하여 단(Column)별로 먼저 나누고, 단 안에서 위아래로 정렬
+                    # 🚀 [수정] 들여쓰기 및 줄 간격 기반 문단 분리 로직 추가
                     blocks = page.get_text("dict")["blocks"]
                     text_blocks = [b for b in blocks if b.get("type") == 0]
                     
                     def smart_column_sort(block):
                         x0, y0, x1, y1 = block["bbox"]
-                        # x좌표를 약 150픽셀 단위의 큰 덩어리(단)로 나눕니다.
-                        # 이렇게 하면 같은 단에 있는 글자들끼리 먼저 묶이고, 그 안에서 y좌표(높이) 순으로 정렬됩니다.
-                        col_group = int(x0 // 150)
+                        col_group = int(x0 // 120) # 단 분리 기준을 조금 더 타이트하게
                         return (col_group, y0)
 
                     text_blocks.sort(key=smart_column_sort)
                     
                     extracted_parts = []
                     for b in text_blocks:
+                        block_x0 = b["bbox"][0]
                         paragraph_text = ""
                         max_size = 0
                         bold_char_count = 0
+                        prev_y1 = None
                         
                         for line in b.get("lines", []):
+                            l_x0, l_y0, l_x1, l_y1 = line["bbox"]
+                            line_height = l_y1 - l_y0
+                            
+                            # [핵심] 문단 바뀜 감지: 1) 평소보다 세로 간격이 넓거나 2) 왼쪽으로 10픽셀 이상 들여쓰기 된 경우
+                            if prev_y1 is not None:
+                                v_gap = l_y0 - prev_y1
+                                is_indented = (l_x0 - block_x0) > 10
+                                
+                                if v_gap > (line_height * 0.3) or is_indented:
+                                    paragraph_text = paragraph_text.rstrip() + "\n\n"
+                                else:
+                                    if not paragraph_text.endswith("\n\n") and paragraph_text != "":
+                                        paragraph_text += " "
+                            
+                            line_text = ""
                             for span in line.get("spans", []):
                                 text = span.get("text", "")
                                 size = span.get("size", 0)
                                 flags = span.get("flags", 0)
                                 
-                                paragraph_text += text
+                                line_text += text
                                 max_size = max(max_size, size)
-                                
-                                if flags & 2**4: # 굵은 글씨 감지
+                                if flags & 2**4: 
                                     bold_char_count += len(text)
-                            paragraph_text += " " 
+                                    
+                            paragraph_text += line_text.strip()
+                            prev_y1 = l_y1
                             
-                        paragraph_text = re.sub(r'(\w)-\s+(\w)', r'\1\2', paragraph_text).strip()
+                        # 하이픈으로 끊긴 단어 결합 (예: bio- mechanics)
+                        paragraph_text = re.sub(r'([a-zA-Z])-\s+([a-zA-Z])', r'\1\2', paragraph_text).strip()
                         if not paragraph_text: continue
                         
-                        # 🚀 [수정] 초록이 굵어지는 현상 방지 (방어막 강화)
+                        # 제목 판별 방어막
                         is_heading = False
                         text_length = len(paragraph_text)
                         
-                        # 길이가 150자를 넘어가면 아무리 굵은 글씨가 많고 폰트가 커도 무조건 본문으로 간주
                         if text_length < 150:
-                            if max_size >= 13.0:
+                            if max_size >= 12.5:
                                 is_heading = True
                             elif text_length > 0 and (bold_char_count / text_length) > 0.4:
                                 is_heading = True
@@ -151,7 +166,9 @@ if uploaded_file:
                         else:
                             extracted_parts.append(paragraph_text)
                             
+                    # 최종 텍스트 병합 및 불필요한 과다 줄바꿈 정리
                     final_text = "\n\n".join(extracted_parts)
+                    final_text = re.sub(r'\n{3,}', '\n\n', final_text)
 
                 st.markdown(final_text)
 
