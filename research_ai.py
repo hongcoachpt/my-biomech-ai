@@ -26,7 +26,7 @@ def check_password():
 
 check_password()
 
-# --- 동적 모델 연결 시스템 (404/429 대응) ---
+# --- [수정] 429 에러 방지용 모델 우선순위 재조정 ---
 @st.cache_resource
 def init_gemini():
     api_key = st.secrets.get("GOOGLE_API_KEY")
@@ -34,8 +34,12 @@ def init_gemini():
     try:
         genai.configure(api_key=api_key)
         available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        priority = ["models/gemini-1.5-pro", "models/gemini-1.5-flash", "models/gemini-pro"]
+        
+        # [중요] 쿼터가 넉넉한(하루 1500회) 1.5-flash와 1.5-pro를 최우선으로 잡습니다.
+        # 2.0/2.5 시리즈는 무료 계정에서 하루 20회 제한이 있어 제외하거나 뒤로 미룹니다.
+        priority = ["models/gemini-1.5-flash", "models/gemini-1.5-pro"]
         chosen_model = next((m for m in priority if m in available_models), available_models[0])
+        
         return genai.GenerativeModel(chosen_model), chosen_model
     except Exception as e: return None, str(e)
 
@@ -52,7 +56,7 @@ if "chat_history" not in st.session_state:
 
 st.title("🔬 스마트 생체역학 통합 연구실")
 
-# 3. PDF 업로드 및 멀티 레이어 뷰어
+# 3. PDF 업로드 및 [차단 우회형] 뷰어
 uploaded_file = st.file_uploader("분석할 논문(PDF) 업로드", type="pdf")
 
 if uploaded_file:
@@ -65,50 +69,62 @@ if uploaded_file:
         with col_view:
             st.subheader("📄 논문 원문 분석기")
             
-            # [핵심] 보기 방식 선택지 추가
-            v_mode = st.radio("보기 방식 선택", ["안전 이미지 모드", "직접 드래그 모드 (iPad 권장)"], horizontal=True)
+            # [수정] 크롬 차단 방지 및 아이패드 직접 드래그를 위한 설계
+            v_mode = st.radio("보기 방식 선택", ["안전 이미지 모드 (추천)", "직접 드래그 모드 (새 창)"], horizontal=True)
             
             page_num = st.select_slider("페이지 이동", options=range(1, total_pages + 1)) - 1
             page = doc.load_page(page_num)
 
-            if v_mode == "안전 이미지 모드":
-                # 고해상도 이미지 렌더링
+            if v_mode == "안전 이미지 모드 (추천)":
+                # 고해상도 이미지 렌더링 (가장 안전하고 빠름)
                 pix = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
                 page_img = Image.open(io.BytesIO(pix.tobytes()))
                 st.image(page_img, use_container_width=True)
             else:
-                # [박사님 요청] 논문에서 직접 드래그할 수 있도록 PDF 네이티브 임베딩
+                # [해결] 크롬/사파리 차단 우회: iframe 대신 '새 탭 열기' 링크 제공
+                # 앱 내부 임베딩은 브라우저가 차단하므로, 시스템 네이티브 뷰어를 호출합니다.
                 base64_pdf = base64.b64encode(file_bytes).decode('utf-8')
-                # 아이패드 최적화를 위해 embed 대신 iframe/object 혼합 방식 사용
-                pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}#page={page_num+1}" width="100%" height="900px"></iframe>'
-                st.markdown(pdf_display, unsafe_allow_html=True)
-                st.info("💡 드래그가 안 될 경우: 주소창 'AA' 버튼 → '데스크탑 웹사이트 요청'을 켜주세요.")
+                pdf_url = f"data:application/pdf;base64,{base64_pdf}"
+                
+                st.warning("⚠️ 브라우저 보안 정책으로 인해 앱 내부 직접 드래그가 차단될 수 있습니다.")
+                st.markdown(f"""
+                    <a href="{pdf_url}" target="_blank" style="text-decoration:none;">
+                        <button style="width:100%; padding:15px; background-color:#4CAF50; color:white; border:none; border-radius:10px; font-weight:bold; cursor:pointer;">
+                            🚀 [클릭] 논문 새 창에서 열기 (여기서 직접 드래그 가능)
+                        </button>
+                    </a>
+                """, unsafe_allow_html=True)
+                st.caption("새 창에서 열린 논문을 드래그한 뒤, 다시 이 화면으로 돌아와 붙여넣으세요.")
 
             st.markdown("---")
-            # [수정] 텍스트 에어리어 삭제하고 OCR 판독 결과만 표시
             with st.expander("📝 AI 정밀 텍스트 판독 결과", expanded=True):
-                if st.button("🚀 AI 정밀 판독 실행 (텍스트 누락 시 클릭)"):
-                    with st.spinner("AI가 페이지를 읽고 있습니다..."):
+                # [수정] 429 에러 대응용 안전 판독 함수
+                if st.button("🚀 AI 정밀 판독 실행"):
+                    with st.spinner("AI가 페이지를 분석 중..."):
                         try:
-                            # 이미지 렌더링 (OCR용)
+                            # OCR용 이미지 생성
                             pix_ocr = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
                             page_img_ocr = Image.open(io.BytesIO(pix_ocr.tobytes()))
-                            ocr_prompt = "이 이미지의 논문 내용을 텍스트로 추출해줘. 제목/소제목은 굵게 표시하고 문단을 잘 나눠줘."
+                            ocr_prompt = "이 이미지의 논문 내용을 텍스트로 추출해줘. 제목/소제목은 굵게 표시해줘."
                             response = model.generate_content([ocr_prompt, page_img_ocr])
                             st.session_state[f"ocr_{page_num}"] = response.text
                             st.rerun()
                         except Exception as e:
-                            st.error(f"AI 판독 오류: {e}")
+                            if "429" in str(e):
+                                st.error("🛑 오늘 AI 사용량(무료 할당량)을 모두 소진했습니다. 내일 다시 시도하거나, 다른 구글 계정의 API Key로 교체해 주세요.")
+                            else:
+                                st.error(f"분석 오류: {e}")
 
                 if f"ocr_{page_num}" in st.session_state:
                     st.markdown(st.session_state[f"ocr_{page_num}"])
                 else:
-                    st.caption("AI 판독 버튼을 누르면 이 페이지의 본문이 여기에 나타납니다.")
+                    # AI 판독 전에는 기본 텍스트 추출이라도 보여줍니다.
+                    st.caption("아래는 기본 추출 텍스트입니다. 더 정확한 판독을 원하시면 위 버튼을 누르세요.")
+                    st.text(page.get_text("text"))
 
     with col_tool:
-        # --- 🧪 정밀 분석 도구 ---
         st.subheader("🧪 문단 정밀 분석")
-        raw_input = st.text_area("분석할 문단을 여기에 붙여넣으세요", height=200, placeholder="왼쪽에서 직접 드래그하거나 OCR 결과를 복사해 넣으세요.")
+        raw_input = st.text_area("분석할 문단을 여기에 붙여넣으세요", height=200)
 
         c1, c2 = st.columns(2)
         
@@ -116,17 +132,17 @@ if uploaded_file:
             try:
                 return model.generate_content(prompt).text
             except Exception as e:
-                if "429" in str(e): return "⚠️ 사용량 초과입니다. 1분 뒤 시도하세요."
+                if "429" in str(e): return "⚠️ 하루 할당량 초과입니다. 내일 다시 시도하세요."
                 return f"❌ 오류: {e}"
 
         if c1.button("🌐 전문 직역 실행"):
             if raw_input.strip():
                 with st.spinner("번역 중..."):
-                    st.info(safe_gen(f"스포츠 생체역학 전문가로서 직역하세요:\n\n{raw_input}"))
+                    st.info(safe_gen(f"스포츠 생체역학 전문가로서 한국어로 직역하세요:\n\n{raw_input}"))
 
         if c2.button("🧠 심층 역학 분석"):
             if raw_input.strip():
-                with st.spinner("역학적 기전 분석 중..."):
+                with st.spinner("분석 중..."):
                     st.success(safe_gen(f"생체역학 박사로서 상세 분석하세요:\n\n{raw_input}"))
 
         st.markdown("---")
