@@ -76,15 +76,14 @@ if uploaded_file:
 
             st.markdown("---")
             
-            with st.expander("📋 논문 텍스트 전체 추출 (원본 양식 100% 거울 복사)", expanded=True):
+            with st.expander("📋 논문 텍스트 전체 추출 (안정화된 순정 문단 모드)", expanded=True):
                 
-                # AI 백업 판독기 (명령어 단순화)
                 if st.button("🚀 AI 정밀 판독 실행 (텍스트가 엉망일 때 클릭)"):
-                    with st.spinner("AI가 눈에 보이는 그대로 문자를 추출 중입니다..."):
+                    with st.spinner("AI가 원본 형태 그대로 문자를 추출 중입니다..."):
                         try:
                             pix_ocr = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
                             img_ocr = Image.open(io.BytesIO(pix_ocr.tobytes()))
-                            prompt = "이 논문의 텍스트를 원본 생긴 그대로 추출해. 굵은 글씨는 마크다운으로 **굵게** 처리하고, 들여쓰기와 줄바꿈, 띄어쓰기를 원본과 100% 똑같이 유지해."
+                            prompt = "이 논문의 텍스트를 추출해. 문단이 중간에 끊기지 않도록 자연스럽게 이어주고, 굵은 글씨는 마크다운으로 **굵게** 처리해줘."
                             response = model.generate_content([prompt, img_ocr])
                             st.session_state[f"ocr_{page_num}"] = response.text
                             st.rerun()
@@ -94,62 +93,53 @@ if uploaded_file:
                 if f"ocr_{page_num}" in st.session_state:
                     final_text = st.session_state[f"ocr_{page_num}"]
                 else:
-                    # 🚀 [핵심] 오직 '물리적 좌표'만을 믿는 정직한 추출 로직
+                    # 🚀 [핵심] 가장 기본적이고 안정적인 파이썬 내장 블록 정렬 기능 사용
+                    # sort=True를 통해 알아서 2단 편집을 왼쪽에서 오른쪽으로, 위에서 아래로 정렬합니다.
                     blocks = page.get_text("dict", sort=True)["blocks"]
                     
                     extracted_parts = []
                     for b in blocks:
-                        if b.get("type") != 0: continue
+                        if b.get("type") != 0: continue # 텍스트 블록만 추출
                         
-                        block_x0 = b["bbox"][0]
-                        paragraph_text = ""
+                        para_text = "" # 하나의 문단(블록)을 담을 바구니
                         
                         for line in b.get("lines", []):
-                            line_x0 = line["bbox"][0]
-                            
-                            # [원칙 1] 들여쓰기 보존: 현재 줄이 문단 시작점보다 10픽셀 이상 들어가 있으면 무조건 새 문단(줄바꿈 2번) 처리
-                            if (line_x0 - block_x0) > 10:
-                                if paragraph_text and not paragraph_text.endswith("\n\n"):
-                                    paragraph_text += "\n\n"
-                                    
-                            line_string = ""
-                            prev_x1 = -1 # 이전 글자의 끝 좌표
-                            
+                            line_text = ""
                             for span in line.get("spans", []):
                                 text = span.get("text", "")
-                                if not text: continue
+                                # 공백만 있는 스팬은 그대로 유지하여 띄어쓰기 보존
+                                if not text.strip(): 
+                                    line_text += text
+                                    continue
                                 
-                                current_x0 = span["bbox"][0]
-                                
-                                # [원칙 2] 띄어쓰기 강제 보존: 이전 글자 끝과 현재 글자 시작이 3픽셀 이상 벌어져 있으면 무조건 스페이스바 추가
-                                if prev_x1 != -1 and (current_x0 - prev_x1) > 3:
-                                    if not line_string.endswith(" ") and not text.startswith(" "):
-                                        line_string += " "
-                                
-                                # [원칙 3] 굵은 글씨 보존: 띄어쓰기 손상 없이 굵기만 추가
+                                # 원본이 굵은 글씨(Bold)인지 확인
                                 is_bold = (span.get("flags", 0) & 2**4) or ("Bold" in span.get("font", ""))
                                 if is_bold:
-                                    # 정규식으로 앞뒤 공백을 분리한 후 핵심 단어에만 ** 부착
+                                    # 띄어쓰기 훼손 없이 핵심 단어에만 굵게 표시
                                     m = re.match(r'^(\s*)(.*?)(\s*)$', text)
                                     if m:
                                         leading, core, trailing = m.groups()
                                         if core:
                                             text = f"{leading}**{core}**{trailing}"
                                 
-                                line_string += text
-                                prev_x1 = span["bbox"][2]
+                                line_text += text
                                 
-                            # 하이픈(-)으로 끝나는 단어는 이어주고, 아니면 띄어쓰기 추가
-                            if line_string.rstrip().endswith("-"):
-                                paragraph_text += line_string.rstrip()[:-1]
+                            line_text = line_text.strip()
+                            if not line_text: continue
+                            
+                            # 줄과 줄 사이를 연결 (하이픈으로 끝나는 단어는 이어붙임)
+                            if para_text.endswith("-"):
+                                para_text = para_text[:-1] + line_text
                             else:
-                                if not line_string.endswith(" "):
-                                    line_string += " "
-                                paragraph_text += line_string
-                                
-                        extracted_parts.append(paragraph_text.strip())
+                                if para_text:
+                                    para_text += " " + line_text
+                                else:
+                                    para_text = line_text
+                                    
+                        if para_text.strip():
+                            extracted_parts.append(para_text.strip())
 
-                    # 각 블록(원본 상의 큰 문단) 사이는 엔터 두 번으로 확실히 띄워줌
+                    # 각 문단(블록)들은 엔터 두 번으로 확실히 구분
                     final_text = "\n\n".join(extracted_parts)
 
                 st.markdown(final_text)
