@@ -31,14 +31,14 @@ def check_password():
 
 check_password()
 
-# 3. 모델 연결 시스템
+# 3. 모델 연결 시스템 (쿼터 에러 방어)
 @st.cache_resource
 def init_gemini():
     api_key = st.secrets.get("GOOGLE_API_KEY")
     if not api_key: return None, "API Key 없음"
     try:
         genai.configure(api_key=api_key)
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        available_models = [m.name for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
         priority = ["models/gemini-1.5-flash", "models/gemini-1.5-pro"]
         chosen_model = next((m for m in priority if m in available_models), available_models[0])
         return genai.GenerativeModel(chosen_model), chosen_model
@@ -61,6 +61,7 @@ if uploaded_file:
         with col_view:
             st.subheader("📄 논문 원문 분석기")
             
+            # 아이패드 네이티브 뷰어 호출
             st.download_button(
                 label="🚀 [iPad 필수] 논문 새 창에서 열기 (직접 드래그용)",
                 data=file_bytes,
@@ -76,14 +77,15 @@ if uploaded_file:
 
             st.markdown("---")
             
-            with st.expander("📋 논문 텍스트 전체 추출 (정밀 문단 결합 모드)", expanded=True):
+            # [핵심] 파트 분리 및 문단 띄어쓰기 추출 섹션
+            with st.expander("📋 논문 텍스트 전체 추출 (파트 및 문단 최적화)", expanded=True):
                 
-                if st.button("🚀 AI 정밀 판독 실행 (텍스트가 엉망일 때 클릭)"):
-                    with st.spinner("AI가 문맥을 분석 중입니다..."):
+                if st.button("🚀 AI 정밀 판독 실행 (텍스트 구조가 복잡할 때 클릭)"):
+                    with st.spinner("AI가 논문 파트를 나누는 중입니다..."):
                         try:
                             pix_ocr = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
                             img_ocr = Image.open(io.BytesIO(pix_ocr.tobytes()))
-                            prompt = "이 학술 논문을 읽고 자연스러운 텍스트로 추출해. 진짜 제목만 굵게(### **제목**) 처리하고, 문단 안에서는 절대 엔터 치지 말고 자연스럽게 이어줘."
+                            prompt = "이 논문 페이지를 읽어줘. 제목이나 소제목(굵은 글씨)을 기점으로 파트를 명확히 나누고, 본문은 문단끼리 띄어쓰기를 잘 지켜서 추출해줘."
                             response = model.generate_content([prompt, img_ocr])
                             st.session_state[f"ocr_{page_num}"] = response.text
                             st.rerun()
@@ -93,57 +95,45 @@ if uploaded_file:
                 if f"ocr_{page_num}" in st.session_state:
                     final_text = st.session_state[f"ocr_{page_num}"]
                 else:
-                    # 🚀 [핵심] 복잡한 좌표 계산 폐기, 가장 안정적인 PyMuPDF 기본 정렬(sort=True) 활용
+                    # 🚀 [수정] 굵은 글씨 기반 파트 분리 및 문단 띄어쓰기 로직
+                    # sort=True를 통해 좌상단부터 순서대로 읽어옵니다.
                     blocks = page.get_text("dict", sort=True)["blocks"]
                     
                     extracted_parts = []
                     for b in blocks:
-                        if b.get("type") != 0: continue # 텍스트 블록만 추출
+                        if b.get("type") != 0: continue # 텍스트 블록만
                         
-                        para_text = ""
-                        max_size = 0
-                        bold_char_count = 0
-                        total_char_count = 0
+                        block_text = ""
+                        has_bold_heading = False
                         
-                        # 하나의 블록(문단) 안에 있는 모든 글자를 스페이스바(공백)로만 이어붙임
                         for line in b.get("lines", []):
+                            line_text = ""
                             for span in line.get("spans", []):
-                                text = span.get("text", "")
-                                if not text.strip(): continue
+                                text = span.get("text", "").strip()
+                                if not text: continue
                                 
-                                size = span.get("size", 0)
-                                flags = span.get("flags", 0)
-                                
-                                para_text += text + " "
-                                max_size = max(max_size, size)
-                                
-                                chars = len(text.strip())
-                                total_char_count += chars
-                                if flags & 2**4: 
-                                    bold_char_count += chars
-                                    
-                        para_text = para_text.strip()
-                        # 하이픈으로 끊긴 단어 복구 (예: bio- mechanics -> biomechanics)
-                        para_text = re.sub(r'([a-zA-Z])-\s+([a-zA-Z])', r'\1\2', para_text)
+                                # 폰트 속성에서 굵은 글씨(Bold) 감지
+                                # 문단이 짧으면서 굵은 글씨면 제목(파트 구분선)으로 간주
+                                if (span.get("flags", 0) & 2**4) and len(text) < 100:
+                                    has_bold_heading = True
+                                    line_text += f"### **{text}**"
+                                else:
+                                    line_text += text + " "
+                            
+                            block_text += line_text.strip() + " "
+                            
+                        # 단어 쪼개짐(하이픈) 복구
+                        block_text = re.sub(r"([a-zA-Z])-\s+([a-zA-Z])", r"\1\2", block_text).strip()
                         
-                        if not para_text: continue
-                        
-                        # 진짜 제목인지 판별 (길이가 짧고 굵은 글씨 비율이 높거나 폰트가 큰 경우)
-                        is_heading = False
-                        if 0 < total_char_count < 150:
-                            if max_size >= 12.0:
-                                is_heading = True
-                            elif (bold_char_count / total_char_count) > 0.5:
-                                is_heading = True
-                            elif para_text.isupper() and total_char_count < 80:
-                                is_heading = True
-                                
-                        if is_heading:
-                            extracted_parts.append(f"### **{para_text}**")
-                        else:
-                            extracted_parts.append(para_text)
+                        if not block_text: continue
 
-                    # 각 문단 덩어리들을 두 줄 바꿈(\n\n)으로 깔끔하게 연결
+                        # 굵은 글씨 제목이 있으면 새로운 파트로 시작, 없으면 문단 띄어쓰기 적용
+                        if has_bold_heading:
+                            extracted_parts.append(block_text)
+                        else:
+                            extracted_parts.append(block_text)
+
+                    # 각 덩어리(블록) 사이를 두 줄 바꿈으로 연결하여 문단 구분 명확화
                     final_text = "\n\n".join(extracted_parts)
 
                 st.markdown(final_text)
@@ -157,7 +147,7 @@ if uploaded_file:
         def safe_gen(prompt):
             try: return model.generate_content(prompt).text
             except Exception as e:
-                if "429" in str(e): return "⚠️ 하루 사용량을 초과했습니다. 잠시 후 시도하세요."
+                if "429" in str(e): return "⚠️ 할당량 초과입니다. 잠시 후 시도하세요."
                 return f"❌ 오류: {e}"
 
         if c1.button("🌐 전문 직역 실행"):
@@ -168,7 +158,7 @@ if uploaded_file:
         if c2.button("🧠 심층 역학 분석"):
             if raw_input.strip():
                 with st.spinner("분석 중..."):
-                    st.success(safe_gen(f"생체역학 박사로서 상세 분석하세요:\n\n{raw_input}"))
+                    st.success(safe_gen(f"스포츠 생체역학 박사로서 상세 분석하세요:\n\n{raw_input}"))
 
         st.markdown("---")
         st.subheader("💬 데이터 및 이미지 질의응답")
