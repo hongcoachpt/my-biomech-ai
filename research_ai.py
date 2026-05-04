@@ -76,14 +76,14 @@ if uploaded_file:
 
             st.markdown("---")
             
-            with st.expander("📋 논문 텍스트 전체 추출 (정밀 문장 결합 모드)", expanded=True):
+            with st.expander("📋 논문 텍스트 전체 추출 (정밀 문단 결합 모드)", expanded=True):
                 
                 if st.button("🚀 AI 정밀 판독 실행 (텍스트가 엉망일 때 클릭)"):
-                    with st.spinner("AI가 논문의 읽기 순서를 분석 중입니다..."):
+                    with st.spinner("AI가 문맥을 분석 중입니다..."):
                         try:
                             pix_ocr = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
                             img_ocr = Image.open(io.BytesIO(pix_ocr.tobytes()))
-                            prompt = "이 학술 논문 페이지를 읽고, 왼쪽 단부터 오른쪽 단 순서로 텍스트를 추출해. 문단이 끊기지 않게 자연스럽게 이어주고, 진짜 제목만 굵게(### **제목**) 처리해줘."
+                            prompt = "이 학술 논문을 읽고 자연스러운 텍스트로 추출해. 진짜 제목만 굵게(### **제목**) 처리하고, 문단 안에서는 절대 엔터 치지 말고 자연스럽게 이어줘."
                             response = model.generate_content([prompt, img_ocr])
                             st.session_state[f"ocr_{page_num}"] = response.text
                             st.rerun()
@@ -93,94 +93,57 @@ if uploaded_file:
                 if f"ocr_{page_num}" in st.session_state:
                     final_text = st.session_state[f"ocr_{page_num}"]
                 else:
-                    # 🚀 [핵심] 블록 안에서 '진짜 문단'을 찾아내어 문장들을 하나로 결합하는 로직
-                    blocks = page.get_text("dict")["blocks"]
-                    text_blocks = [b for b in blocks if b.get("type") == 0]
-                    
-                    def smart_column_sort(block):
-                        x0, y0, x1, y1 = block["bbox"]
-                        col_group = int(x0 // 120) 
-                        return (col_group, y0)
-
-                    text_blocks.sort(key=smart_column_sort)
+                    # 🚀 [핵심] 복잡한 좌표 계산 폐기, 가장 안정적인 PyMuPDF 기본 정렬(sort=True) 활용
+                    blocks = page.get_text("dict", sort=True)["blocks"]
                     
                     extracted_parts = []
-                    for b in text_blocks:
-                        block_x0, block_y0, block_x1, block_y1 = b["bbox"]
+                    for b in blocks:
+                        if b.get("type") != 0: continue # 텍스트 블록만 추출
                         
-                        current_para_text = ""
+                        para_text = ""
                         max_size = 0
                         bold_char_count = 0
-                        prev_line_bbox = None
+                        total_char_count = 0
                         
+                        # 하나의 블록(문단) 안에 있는 모든 글자를 스페이스바(공백)로만 이어붙임
                         for line in b.get("lines", []):
-                            l_x0, l_y0, l_x1, l_y1 = line["bbox"]
-                            line_height = l_y1 - l_y0
-                            
-                            is_new_para = False
-                            
-                            if prev_line_bbox is not None:
-                                p_x0, p_y0, p_x1, p_y1 = prev_line_bbox
-                                
-                                # 1. 머리-머리 간격이 줄 높이의 1.4배 이상 벌어지면 새 문단
-                                if (l_y0 - p_y0) > (line_height * 1.4):
-                                    is_new_para = True
-                                # 2. 현재 줄이 블록 왼쪽 끝보다 15픽셀 이상 들여쓰기 되었으면 새 문단
-                                elif (l_x0 - block_x0) > 15:
-                                    is_new_para = True
-                                # 3. 윗줄이 블록 오른쪽 끝에 도달하지 못하고 일찍 끝났으면(마침표 등) 새 문단
-                                elif (block_x1 - p_x1) > 40:
-                                    is_new_para = True
-
-                            # 새 문단이 시작될 때, 지금까지 모은 텍스트를 저장하고 초기화
-                            if is_new_para and current_para_text.strip():
-                                current_para_text = re.sub(r'([a-zA-Z])-\s+([a-zA-Z])', r'\1\2', current_para_text).strip()
-                                
-                                is_heading = False
-                                text_len = len(current_para_text)
-                                if text_len < 150:
-                                    if max_size >= 12.5: is_heading = True
-                                    elif text_len > 0 and (bold_char_count / text_len) > 0.4: is_heading = True
-                                    elif current_para_text.isupper() and text_len < 100: is_heading = True
-                                
-                                if is_heading: extracted_parts.append(f"### **{current_para_text}**")
-                                else: extracted_parts.append(current_para_text)
-                                
-                                current_para_text = ""
-                                max_size = 0
-                                bold_char_count = 0
-                                
-                            # 글자들을 current_para_text라는 하나의 바구니(문단)에 스페이스바 한 칸으로 계속 이어붙임
-                            line_text = ""
                             for span in line.get("spans", []):
                                 text = span.get("text", "")
+                                if not text.strip(): continue
+                                
                                 size = span.get("size", 0)
                                 flags = span.get("flags", 0)
                                 
-                                line_text += text
+                                para_text += text + " "
                                 max_size = max(max_size, size)
-                                if flags & 2**4: bold_char_count += len(text)
                                 
-                            if current_para_text and not current_para_text.endswith(" "):
-                                current_para_text += " "
-                            current_para_text += line_text.strip()
-                            
-                            prev_line_bbox = (l_x0, l_y0, l_x1, l_y1)
-                            
-                        # 블록의 마지막에 남은 텍스트 처리
-                        if current_para_text.strip():
-                            current_para_text = re.sub(r'([a-zA-Z])-\s+([a-zA-Z])', r'\1\2', current_para_text).strip()
-                            is_heading = False
-                            text_len = len(current_para_text)
-                            if text_len < 150:
-                                if max_size >= 12.5: is_heading = True
-                                elif text_len > 0 and (bold_char_count / text_len) > 0.4: is_heading = True
-                                elif current_para_text.isupper() and text_len < 100: is_heading = True
-                            
-                            if is_heading: extracted_parts.append(f"### **{current_para_text}**")
-                            else: extracted_parts.append(current_para_text)
+                                chars = len(text.strip())
+                                total_char_count += chars
+                                if flags & 2**4: 
+                                    bold_char_count += chars
+                                    
+                        para_text = para_text.strip()
+                        # 하이픈으로 끊긴 단어 복구 (예: bio- mechanics -> biomechanics)
+                        para_text = re.sub(r'([a-zA-Z])-\s+([a-zA-Z])', r'\1\2', para_text)
+                        
+                        if not para_text: continue
+                        
+                        # 진짜 제목인지 판별 (길이가 짧고 굵은 글씨 비율이 높거나 폰트가 큰 경우)
+                        is_heading = False
+                        if 0 < total_char_count < 150:
+                            if max_size >= 12.0:
+                                is_heading = True
+                            elif (bold_char_count / total_char_count) > 0.5:
+                                is_heading = True
+                            elif para_text.isupper() and total_char_count < 80:
+                                is_heading = True
+                                
+                        if is_heading:
+                            extracted_parts.append(f"### **{para_text}**")
+                        else:
+                            extracted_parts.append(para_text)
 
-                    # 문단과 문단 사이만 두 줄 바꿈(\n\n)으로 깔끔하게 결합
+                    # 각 문단 덩어리들을 두 줄 바꿈(\n\n)으로 깔끔하게 연결
                     final_text = "\n\n".join(extracted_parts)
 
                 st.markdown(final_text)
