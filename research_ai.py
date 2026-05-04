@@ -76,14 +76,19 @@ if uploaded_file:
 
             st.markdown("---")
             
-            with st.expander("📋 논문 텍스트 전체 추출 (2단 편집 및 폰트 지능형 인식)", expanded=True):
+            with st.expander("📋 논문 텍스트 전체 추출 (단/사이드바 분리 알고리즘 적용)", expanded=True):
                 
-                if st.button("🚀 AI 정밀 판독 실행 (텍스트 누락 시 클릭)"):
-                    with st.spinner("AI가 논문 레이아웃을 분석 중입니다..."):
+                # 🚀 [수정] AI에게 논문의 논리적 구조를 파악하도록 프롬프트 고도화
+                if st.button("🚀 AI 정밀 판독 실행 (텍스트가 엉망일 때 클릭)"):
+                    with st.spinner("AI가 논문의 읽기 순서를 분석하여 추출 중입니다..."):
                         try:
                             pix_ocr = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
                             img_ocr = Image.open(io.BytesIO(pix_ocr.tobytes()))
-                            prompt = "이 논문 페이지를 읽어줘. 왼쪽 단을 위에서 아래로 다 읽고, 그 다음 오른쪽 단을 읽는 논문 형식의 순서를 엄격하게 지켜. 진짜 제목이나 소제목만 굵은 글씨로 살리고, 초록이나 본문은 일반 텍스트로 깔끔하게 정리해줘."
+                            prompt = """
+                            이 이미지는 학술 논문 페이지입니다. 사이드바(저작권, 날짜, 에디터 정보 등)와 메인 본문(제목, 초록, 서론 등)이 나뉘어 있을 수 있습니다. 
+                            사람이 논문을 읽는 논리적인 순서(메인 제목 -> 저자 -> 초록 -> 본문)대로 텍스트를 추출해 주세요. 중요하지 않은 사이드바 정보는 맨 마지막에 빼주세요. 
+                            진짜 제목이나 소제목만 마크다운(### **제목**)으로 굵게 처리하고, 초록이나 일반 본문은 내용에 굵은 글씨가 섞여 있어도 절대 제목 처리하지 말고 일반 텍스트로 출력하세요.
+                            """
                             response = model.generate_content([prompt, img_ocr])
                             st.session_state[f"ocr_{page_num}"] = response.text
                             st.rerun()
@@ -93,31 +98,24 @@ if uploaded_file:
                 if f"ocr_{page_num}" in st.session_state:
                     final_text = st.session_state[f"ocr_{page_num}"]
                 else:
-                    # 논문 2단 포맷 맞춤형 정렬
-                    page_width = page.rect.width
+                    # 🚀 [수정] 파이썬 추출 로직: x좌표를 그룹화하여 단(Column)별로 먼저 나누고, 단 안에서 위아래로 정렬
                     blocks = page.get_text("dict")["blocks"]
                     text_blocks = [b for b in blocks if b.get("type") == 0]
                     
-                    def academic_reading_order(block):
+                    def smart_column_sort(block):
                         x0, y0, x1, y1 = block["bbox"]
-                        width = x1 - x0
-                        center_x = (x0 + x1) / 2
-                        is_full_width = width > (page_width * 0.6)
-                        
-                        if is_full_width:
-                            col = 0 
-                        else:
-                            col = 0 if center_x < (page_width / 2) else 1
-                        return (col, y0)
+                        # x좌표를 약 150픽셀 단위의 큰 덩어리(단)로 나눕니다.
+                        # 이렇게 하면 같은 단에 있는 글자들끼리 먼저 묶이고, 그 안에서 y좌표(높이) 순으로 정렬됩니다.
+                        col_group = int(x0 // 150)
+                        return (col_group, y0)
 
-                    text_blocks.sort(key=academic_reading_order)
+                    text_blocks.sort(key=smart_column_sort)
                     
                     extracted_parts = []
                     for b in text_blocks:
                         paragraph_text = ""
                         max_size = 0
                         bold_char_count = 0
-                        total_char_count = 0
                         
                         for line in b.get("lines", []):
                             for span in line.get("spans", []):
@@ -127,31 +125,27 @@ if uploaded_file:
                                 
                                 paragraph_text += text
                                 max_size = max(max_size, size)
-                                text_len = len(text)
-                                total_char_count += text_len
                                 
-                                # 굵은 글씨(Bold) 길이 측정
-                                if flags & 2**4: 
-                                    bold_char_count += text_len
-                            paragraph_text += " "
+                                if flags & 2**4: # 굵은 글씨 감지
+                                    bold_char_count += len(text)
+                            paragraph_text += " " 
                             
                         paragraph_text = re.sub(r'(\w)-\s+(\w)', r'\1\2', paragraph_text).strip()
                         if not paragraph_text: continue
                         
-                        # 🚀 [핵심 수정] 제목 판별 로직 고도화
+                        # 🚀 [수정] 초록이 굵어지는 현상 방지 (방어막 강화)
                         is_heading = False
                         text_length = len(paragraph_text)
                         
-                        # 1. 폰트가 확연히 큰 경우 (대제목)
-                        if max_size >= 13.0:
-                            is_heading = True
-                        # 2. 문단이 짧고(150자 이내), 글자의 절반 이상이 굵은 글씨인 경우 (소제목)
-                        elif text_length > 0 and (bold_char_count / text_length) > 0.5 and text_length < 150:
-                            is_heading = True
-                        # 3. 전부 대문자이면서 짧은 경우 (예: "ABSTRACT", "METHODS")
-                        elif paragraph_text.isupper() and text_length < 100:
-                            is_heading = True
-                            
+                        # 길이가 150자를 넘어가면 아무리 굵은 글씨가 많고 폰트가 커도 무조건 본문으로 간주
+                        if text_length < 150:
+                            if max_size >= 13.0:
+                                is_heading = True
+                            elif text_length > 0 and (bold_char_count / text_length) > 0.4:
+                                is_heading = True
+                            elif paragraph_text.isupper() and text_length < 100:
+                                is_heading = True
+                                
                         if is_heading:
                             extracted_parts.append(f"\n### **{paragraph_text}**\n")
                         else:
@@ -170,13 +164,13 @@ if uploaded_file:
         def safe_gen(prompt):
             try: return model.generate_content(prompt).text
             except Exception as e:
-                if "429" in str(e): return "⚠️ 사용량 초과입니다. 잠시 후 시도하세요."
+                if "429" in str(e): return "⚠️ 하루 사용량을 초과했습니다. 잠시 후 다시 시도하세요."
                 return f"❌ 오류: {e}"
 
         if c1.button("🌐 전문 직역 실행"):
             if raw_input.strip():
                 with st.spinner("번역 중..."):
-                    st.info(safe_gen(f"스포츠 생체역학 전문가로서 한국어로 직역하세요:\n\n{raw_input}"))
+                    st.info(safe_gen(f"스포츠 생체역학 전문가로서 한국어로 자연스럽게 직역하세요:\n\n{raw_input}"))
 
         if c2.button("🧠 심층 역학 분석"):
             if raw_input.strip():
