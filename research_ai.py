@@ -3,7 +3,6 @@ import google.generativeai as genai
 import fitz  # PyMuPDF
 from PIL import Image
 import io
-import base64
 import re
 
 # 1. 페이지 설정
@@ -222,37 +221,12 @@ if uploaded_file:
         st.markdown("---")
         st.subheader("💬 데이터 및 이미지 질의응답")
 
-# [핵심] 붙여넣기 기능을 방해하지 않는 정밀 CSS
-        st.markdown("""
-            <style>
-            /* 오른쪽 붙여넣기 존 디자인 */
-            div[data-testid="column"]:nth-of-type(2) [data-testid="stFileUploadDropzone"] {
-                border: 2px dashed #15803d !important;
-                background-color: #f0fdf4 !important;
-                min-height: 100px !important;
-            }
-            /* 버튼은 유지하되 텍스트로 가이드만 변경 (완전히 지우면 붙여넣기 인식이 안 될 수 있음) */
-            div[data-testid="column"]:nth-of-type(2) [data-testid="stFileUploaderDropzoneInstructions"] span {
-                display: none;
-            }
-            div[data-testid="column"]:nth-of-type(2) [data-testid="stFileUploaderDropzoneInstructions"]::after {
-                content: "🖱️ 클릭(탐색기 닫기) 후 Ctrl+V";
-                font-weight: bold;
-                color: #15803d;
-            }
-            </style>
-        """, unsafe_allow_html=True)
-
-        i_col1, i_col2 = st.columns(2)
-        with i_col1:
-            img_file = st.file_uploader("📁 파일 업로드", type=["png", "jpg", "jpeg"], key="f_up")
-        with i_col2:
-            # key를 다르게 설정하여 간섭 방지
-            img_paste = st.file_uploader("📋 붙여넣기 존", type=["png", "jpg", "jpeg"], key="p_up")
-
-        data_img = img_paste if img_paste else img_file
-        if data_img: st.image(data_img, width=300)
+# [핵심] 단일 업로더로 복구하여 글로벌 붙여넣기 기능 완벽 부활
+        st.info("💡 **마법의 캡처 붙여넣기 비법:** 버튼 누르지 마세요! 팝업창 뜹니다.\n그냥 화면의 **빈 흰색 여백**을 마우스로 딱 한 번만 클릭하고 **Ctrl+V**를 누르면 끝입니다!")
         
+        data_img = st.file_uploader("📂 (PC 파일 업로드용. 캡처본은 여백 클릭 후 Ctrl+V 하세요!)", type=["png", "jpg", "jpeg"])
+        
+        if data_img: st.image(data_img, width=300)
   
         chat_query = st.text_area("질문을 입력하세요", height=100)
         if st.button("🚀 분석 전송"):
