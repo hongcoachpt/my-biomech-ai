@@ -224,10 +224,10 @@ if uploaded_file:
         st.subheader("💬 데이터 및 이미지 질의응답")
 
 # 🚩🚩🚩 [수정 확인 포인트] 🚩🚩🚩
- # [캡처 붙여넣기 단일 창 유지]
-        st.info("💡 **마법의 캡처 붙여넣기 비법:** 버튼 누르지 마세요! 팝업창 뜹니다.\n그냥 화면의 **빈 흰색 여백**을 마우스로 딱 한 번만 클릭하고 **Ctrl+V**를 누르면 끝입니다!")
+# 꼼수 없는 가장 날것의 확실한 파일 업로더
+        st.warning("🚨 주의: 화면 아무 데나 누르고 붙여넣기 하면 안 들어갑니다!\n반드시 아래 **[Drag and drop file here] 라고 쓰인 회색 박스 안쪽을 마우스로 클릭**하신 다음 `Ctrl+V`를 누르세요!")
         
-        data_img = st.file_uploader("📂 (PC 파일 업로드용. 캡처본은 여백 클릭 후 Ctrl+V 하세요!)", type=["png", "jpg", "jpeg"])
+        data_img = st.file_uploader("사진을 넣으려면 여기 회색 박스를 클릭하세요", type=["png", "jpg", "jpeg"])
         
         if data_img: st.image(data_img, width=300)
   
