@@ -222,51 +222,47 @@ if uploaded_file:
         st.markdown("---")
         st.subheader("💬 데이터 및 이미지 질의응답")
 
-이미지 수정부분
- st.markdown("### 이미지 입력")
-st.caption("💡 아래 초록 박스 클릭 → Ctrl+V 로 캡처 이미지를 붙여넣거나, 파일을 드래그하세요.")
+# [수정] 업로드 버튼 숨기기 CSS 마법 (완벽한 붙여넣기 전용창 구현)
+        st.markdown("""
+            <style>
+            /* 두 번째 칼럼(붙여넣기 존)의 파일 업로더 버튼 및 기본 텍스트 숨기기 */
+            div[data-testid="column"]:nth-of-type(2) div[data-testid="stFileUploader"] button {
+                display: none !important;
+            }
+            div[data-testid="column"]:nth-of-type(2) div[data-testid="stFileUploader"] [data-testid="stFileUploaderDropzoneInstructions"] > div > span {
+                display: none !important;
+            }
+            div[data-testid="column"]:nth-of-type(2) div[data-testid="stFileUploader"] [data-testid="stFileUploaderDropzoneInstructions"] > div > small {
+                display: none !important;
+            }
+            /* 붙여넣기 전용 직관적인 안내 문구 덮어쓰기 */
+            div[data-testid="column"]:nth-of-type(2) div[data-testid="stFileUploader"] [data-testid="stFileUploaderDropzoneInstructions"]::before {
+                content: '🖱️ 박스 안을 클릭하고 Ctrl + V';
+                display: block;
+                font-size: 16px;
+                font-weight: bold;
+                color: #15803d;
+                margin-top: 15px;
+                margin-bottom: 15px;
+            }
+            </style>
+        """, unsafe_allow_html=True)
 
-# 1) 붙여넣기 컴포넌트
-components.html(paste_html, height=220, scrolling=False)
-
-# 2) postMessage → Streamlit 값 수신 컴포넌트
-#    반환값: "data:image/png;base64,..." 문자열 또는 None
-receiver_html = """
-<script>
-  // 부모 창의 메시지를 받아 Streamlit component value로 올림
-  window.addEventListener('message', (e) => {
-    if (e.data?.type === 'PASTE_IMAGE') {
-      window.parent.postMessage({
-        type: 'streamlit:setComponentValue',
-        value: e.data.dataUrl
-      }, '*');
-    }
-  });
-</script>
-"""
-
-# streamlit-custom-component 없이 간단히 쓰려면
-# session_state 폴백: JS→URL query param→rerun 패턴 사용
-data_url = st.query_params.get("pasted_img", None)
-
-if data_url:
-    header, encoded = data_url.split(",", 1)
-    img_bytes = base64.b64decode(encoded)
-    pil_img   = Image.open(io.BytesIO(img_bytes))
-    st.image(pil_img, width=300, caption="붙여넣은 이미지")
-    # 분석에 사용할 bytes
-    data_img_bytes = img_bytes
-else:
-    # 3) 파일 업로드 폴백 (파일로 저장된 이미지용)
-    uploaded = st.file_uploader(
-        "📂 저장된 파일로 업로드 (파일 탐색기 필요 없으면 위 초록 박스 사용)",
-        type=["png", "jpg", "jpeg"],
-        label_visibility="visible"
-    )
-    if uploaded:
-        st.image(uploaded, width=300)
-        data_img_bytes = uploaded.read()
-
+        img_col1, img_col2 = st.columns(2)
+        
+        with img_col1:
+            st.markdown("**📁 PC 파일 찾아보기**")
+            # 탐색기를 띄우는 기본 파일 업로더
+            img_file = st.file_uploader("파일 업로드", type=["png", "jpg", "jpeg"], label_visibility="collapsed", key="file_btn")
+            
+        with img_col2:
+            st.markdown("**📋 캡처 붙여넣기 존**")
+            # CSS로 버튼이 완벽히 숨겨진 붙여넣기 전용 업로더
+            img_paste = st.file_uploader("클립보드 붙여넣기", type=["png", "jpg", "jpeg"], label_visibility="collapsed", key="paste_btn")
+            
+        data_img = img_paste if img_paste else img_file
+        
+        if data_img: st.image(data_img, width=300)
         
   
         chat_query = st.text_area("질문을 입력하세요", height=100)
