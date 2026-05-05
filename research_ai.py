@@ -222,28 +222,37 @@ if uploaded_file:
         st.markdown("---")
         st.subheader("💬 데이터 및 이미지 질의응답")
 
-# [수정] 업로드 버튼 숨기기 CSS 마법 (완벽한 붙여넣기 전용창 구현)
+# [수정] 업로드 버튼 완전 철거 & 붙여넣기 전용 디자인 강제 적용 CSS
         st.markdown("""
             <style>
-            /* 두 번째 칼럼(붙여넣기 존)의 파일 업로더 버튼 및 기본 텍스트 숨기기 */
-            div[data-testid="column"]:nth-of-type(2) div[data-testid="stFileUploader"] button {
-                display: none !important;
+            /* 2번째 기둥(오른쪽 창) 안의 찾아보기 버튼, 구름 아이콘, 용량제한 텍스트 완전 삭제 */
+            div[data-testid="column"]:nth-child(2) button { display: none !important; }
+            div[data-testid="column"]:nth-child(2) svg { display: none !important; }
+            div[data-testid="column"]:nth-child(2) small { display: none !important; }
+            
+            /* 기존 'Drag and drop' 글자를 투명하게 날려버림 */
+            div[data-testid="column"]:nth-child(2) [data-testid="stFileUploaderDropzoneInstructions"] {
+                color: transparent !important;
             }
-            div[data-testid="column"]:nth-of-type(2) div[data-testid="stFileUploader"] [data-testid="stFileUploaderDropzoneInstructions"] > div > span {
-                display: none !important;
+            
+            /* 투명해진 자리에 붙여넣기 전용 안내문구만 새로 주입 */
+            div[data-testid="column"]:nth-child(2) [data-testid="stFileUploaderDropzoneInstructions"]::before {
+                content: "🖱️ 박스 안을 클릭하고 Ctrl + V";
+                color: #15803d !important;
+                font-size: 16px !important;
+                font-weight: bold !important;
+                display: block !important;
+                text-align: center !important;
+                padding-top: 15px !important;
+                padding-bottom: 15px !important;
+                visibility: visible !important;
             }
-            div[data-testid="column"]:nth-of-type(2) div[data-testid="stFileUploader"] [data-testid="stFileUploaderDropzoneInstructions"] > div > small {
-                display: none !important;
-            }
-            /* 붙여넣기 전용 직관적인 안내 문구 덮어쓰기 */
-            div[data-testid="column"]:nth-of-type(2) div[data-testid="stFileUploader"] [data-testid="stFileUploaderDropzoneInstructions"]::before {
-                content: '🖱️ 박스 안을 클릭하고 Ctrl + V';
-                display: block;
-                font-size: 16px;
-                font-weight: bold;
-                color: #15803d;
-                margin-top: 15px;
-                margin-bottom: 15px;
+            
+            /* 오른쪽 박스 전체 배경색과 테두리를 초록색 점선(붙여넣기 느낌)으로 변경 */
+            div[data-testid="column"]:nth-child(2) [data-testid="stFileUploadDropzone"] {
+                background-color: #f0fdf4 !important;
+                border: 2px dashed #4CAF50 !important;
+                border-radius: 10px !important;
             }
             </style>
         """, unsafe_allow_html=True)
@@ -252,12 +261,12 @@ if uploaded_file:
         
         with img_col1:
             st.markdown("**📁 PC 파일 찾아보기**")
-            # 탐색기를 띄우는 기본 파일 업로더
+            # 왼쪽은 버튼이 살아있는 정상적인 파일 업로더
             img_file = st.file_uploader("파일 업로드", type=["png", "jpg", "jpeg"], label_visibility="collapsed", key="file_btn")
             
         with img_col2:
             st.markdown("**📋 캡처 붙여넣기 존**")
-            # CSS로 버튼이 완벽히 숨겨진 붙여넣기 전용 업로더
+            # 오른쪽은 버튼이 완전히 박살난(?) 깔끔한 붙여넣기 전용 존
             img_paste = st.file_uploader("클립보드 붙여넣기", type=["png", "jpg", "jpeg"], label_visibility="collapsed", key="paste_btn")
             
         data_img = img_paste if img_paste else img_file
