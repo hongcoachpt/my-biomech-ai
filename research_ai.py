@@ -265,12 +265,9 @@ if uploaded_file:
             img_file = st.file_uploader("파일 업로드", type=["png", "jpg", "jpeg"], label_visibility="collapsed", key="file_btn")
             
         with img_col2:
-            st.markdown("**📋 캡처 붙여넣기 존**")
-            # 오른쪽은 버튼이 완전히 박살난(?) 깔끔한 붙여넣기 전용 존
-            img_paste = st.file_uploader("클립보드 붙여넣기", type=["png", "jpg", "jpeg"], label_visibility="collapsed", key="paste_btn")
-            
-        data_img = img_paste if img_paste else img_file
-        
+          st.markdown("---")
+        st.subheader("💬 데이터 및 이미지 질의응답")
+        data_img = st.file_uploader("📸 데이터 캡처본 업로드", type=["png", "jpg", "jpeg"])
         if data_img: st.image(data_img, width=300)
         
   
