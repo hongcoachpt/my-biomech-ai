@@ -48,22 +48,6 @@ def get_engine(model_id):
         st.error(f"연결 오류: {e}")
         return None
 
-# 3. 모델 연결 시스템
-@st.cache_resource
-def init_gemini():
-    api_key = st.secrets.get("GOOGLE_API_KEY")
-    if not api_key: return None, "API Key 없음"
-    try:
-        genai.configure(api_key=api_key)
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        priority = ["models/gemini-1.5-flash", "models/gemini-1.5-pro"]
-        chosen_model = next((m for m in priority if m in available_models), available_models[0])
-        return genai.GenerativeModel(chosen_model), chosen_model
-    except Exception as e: return None, str(e)
-
-model, model_name = init_gemini(
-
-
 # 사이드바에 박사님을 위한 모델 조종석 추가
 with st.sidebar:
     st.header("🔬 생체역학 연구실 엔진 설정")
@@ -78,6 +62,21 @@ with st.sidebar:
         
     st.markdown("---")
     st.caption("※ 분석 중 429 에러(할당량 초과)가 발생하면, 즉시 Flash 모델로 변경해서 이어가세요.")
+
+# 3. 모델 연결 시스템
+@st.cache_resource
+def init_gemini():
+    api_key = st.secrets.get("GOOGLE_API_KEY")
+    if not api_key: return None, "API Key 없음"
+    try:
+        genai.configure(api_key=api_key)
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        priority = ["models/gemini-1.5-flash", "models/gemini-1.5-pro"]
+        chosen_model = next((m for m in priority if m in available_models), available_models[0])
+        return genai.GenerativeModel(chosen_model), chosen_model
+    except Exception as e: return None, str(e)
+
+model, model_name = init_gemini()
     
 
 # 4. 메인 UI
