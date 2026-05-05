@@ -222,24 +222,13 @@ if uploaded_file:
         st.markdown("---")
         st.subheader("💬 데이터 및 이미지 질의응답")
 
-        
-   # [수정] 기술적 한계를 반영하여 '진짜 작동하는' 2개의 창으로 분리
-        img_col1, img_col2 = st.columns(2)
-        
-        with img_col1:
-            st.markdown("**📁 PC 파일 찾아보기**")
-            # 탐색기를 띄우는 용도
-            img_file = st.file_uploader("파일 업로드", type=["png", "jpg", "jpeg"], label_visibility="collapsed", key="file_btn")
-            
-        with img_col2:
-            st.markdown("**📋 캡처 붙여넣기 존**")
-            st.caption("👇 빈 박스를 한 번 누르고 **Ctrl+V**")
-            # 복사/붙여넣기를 받는 용도 (업로드 버튼은 어쩔 수 없이 보입니다 😭)
-            img_paste = st.file_uploader("클립보드 붙여넣기", type=["png", "jpg", "jpeg"], label_visibility="collapsed", key="paste_btn")
-            
-        data_img = img_paste if img_paste else img_file
-        
-        if data_img: st.image(data_img, width=300)
+이미지 수정부분
+  from streamlit_paste_button import paste_image_button
+
+img_result = paste_image_button("📋 클립보드에서 붙여넣기")
+if img_result.image_data is not None:
+    st.image(img_result.image_data, width=300)      
+  
         chat_query = st.text_area("질문을 입력하세요", height=100)
         if st.button("🚀 분석 전송"):
             if chat_query or data_img:
