@@ -18,8 +18,6 @@ if "analysis_result" not in st.session_state:
     st.session_state.analysis_result = ""
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
-
-# ✅ 수정: 토큰 사용량 추적용 session_state
 if "token_used_today" not in st.session_state:
     st.session_state.token_used_today = 0
 if "request_count_today" not in st.session_state:
@@ -42,24 +40,24 @@ def check_password():
 
 check_password()
 
-# ✅ 수정 (models/ 제거)
+# 3. 모델 설정
 MODEL_MAP = {
-    "⚡ Gemini 1.5 Flash (기본 추천)":   "gemini-1.5-flash",
-    "🚀 Gemini 2.0 Flash (최신)":        "gemini-2.0-flash",
-    "🧠 Gemini 1.5 Pro (심층 분석)":     "gemini-1.5-pro",
+    "⚡ Gemini 1.5 Flash (기본 추천)": "gemini-1.5-flash",
+    "🚀 Gemini 2.0 Flash (최신)":      "gemini-2.0-flash",
+    "🧠 Gemini 1.5 Pro (심층 분석)":   "gemini-1.5-pro",
 }
 
-# ✅ 수정: 모델별 하루 무료 한도
 MODEL_LIMIT = {
     "gemini-1.5-flash": 1500,
     "gemini-2.0-flash": 1500,
     "gemini-1.5-pro":   50,
 }
 
-@st.cache_resource
+# ✅ 핵심 수정: @st.cache_resource 제거 → 캐시 문제 완전 해결
 def get_engine(model_id):
     api_key = st.secrets.get("GOOGLE_API_KEY")
-    if not api_key: return None
+    if not api_key:
+        return None
     try:
         genai.configure(api_key=api_key)
         return genai.GenerativeModel(model_id)
@@ -72,6 +70,8 @@ with st.sidebar:
     st.header("🔬 생체역학 연구실 엔진 설정")
     selected_label = st.selectbox("사용할 AI 모델을 고르세요", list(MODEL_MAP.keys()))
     selected_model_id = MODEL_MAP[selected_label]
+
+    # ✅ 매번 새로 연결 (캐시 없음)
     model = get_engine(selected_model_id)
 
     if model:
@@ -81,7 +81,7 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # ✅ 수정: 실시간 사용량 표시
+    # 실시간 사용량 표시
     daily_limit = MODEL_LIMIT.get(selected_model_id, 1500)
     used = st.session_state.request_count_today
     remaining = max(daily_limit - used, 0)
@@ -89,7 +89,6 @@ with st.sidebar:
 
     st.markdown("### 📊 오늘 사용량")
 
-    # 사용량 프로그레스 바
     if usage_pct < 0.5:
         bar_color = "🟢"
         status = "여유"
@@ -102,13 +101,13 @@ with st.sidebar:
 
     st.progress(usage_pct)
     st.markdown(f"""
-    | 항목 | 값 |
-    |---|---|
-    | {bar_color} 상태 | **{status}** |
-    | 사용 요청 | **{used}회** |
-    | 남은 요청 | **{remaining}회** |
-    | 하루 한도 | **{daily_limit}회** |
-    """)
+| 항목 | 값 |
+|---|---|
+| {bar_color} 상태 | **{status}** |
+| 사용 요청 | **{used}회** |
+| 남은 요청 | **{remaining}회** |
+| 하루 한도 | **{daily_limit}회** |
+""")
 
     if st.button("🔄 사용량 초기화"):
         st.session_state.request_count_today = 0
@@ -119,19 +118,19 @@ with st.sidebar:
     st.caption("※ 사용량은 앱 세션 기준입니다. 매일 자정 Google 서버에서 자동 초기화됩니다.")
     st.caption("※ 429 오류 시 Flash 모델로 변경하세요.")
 
-# ── safe_gen: 요청 횟수 카운트 포함 ─────────────────────────────────
+# ── safe_gen ─────────────────────────────────────────────────────────
 def safe_gen(prompt):
     try:
         response = model.generate_content(prompt)
-        # ✅ 수정: 요청 성공 시 카운트 증가
         st.session_state.request_count_today += 1
         return response.text
     except Exception as e:
-        if "429" in str(e):
+        err = str(e)
+        if "429" in err:
             return "⚠️ 하루 사용량을 초과했습니다. Flash 모델로 변경해 주세요."
-        if "404" in str(e):
+        if "404" in err:
             return "⚠️ 모델을 찾을 수 없습니다. 다른 모델로 변경해 주세요."
-        return f"❌ 오류: {e}"
+        return f"❌ 오류: {err}"
 
 # ── PDF 표 추출 함수 ─────────────────────────────────────────────────
 def extract_tables_from_page(page):
@@ -154,7 +153,6 @@ def extract_tables_from_page(page):
 # ── 고속 구조 추출 함수 ──────────────────────────────────────────────
 def extract_structured_text(page):
     table_md_list, table_bboxes = extract_tables_from_page(page)
-
     blocks = page.get_text("dict", sort=True)["blocks"]
     page_width = page.rect.width
     mid_x = page_width / 2
@@ -167,20 +165,15 @@ def extract_structured_text(page):
         return False
 
     text_blocks = [b for b in blocks if b.get("type") == 0 and not in_table(b["bbox"])]
-
     left_blocks  = [b for b in text_blocks if b["bbox"][0] < mid_x - 20]
     right_blocks = [b for b in text_blocks if b["bbox"][0] >= mid_x - 20]
-
     is_two_column = (
         len(left_blocks) > 1 and len(right_blocks) > 1
         and max((b["bbox"][2] for b in left_blocks), default=0) < mid_x + 30
     )
-
     sorted_blocks = (left_blocks + right_blocks) if is_two_column else text_blocks
 
-    all_items = []
-    for b in sorted_blocks:
-        all_items.append((b["bbox"][1], "block", b))
+    all_items = [(b["bbox"][1], "block", b) for b in sorted_blocks]
     for bbox, md in table_md_list:
         all_items.append((bbox[1], "table", md))
     all_items.sort(key=lambda x: x[0])
@@ -202,8 +195,7 @@ def extract_structured_text(page):
             for span in line.get("spans", []):
                 t = span.get("text", "").strip()
                 if t:
-                    size = span.get("size", 0)
-                    max_size = max(max_size, size)
+                    max_size = max(max_size, span.get("size", 0))
                     chars = len(t)
                     total_char_count += chars
                     is_bold = (span.get("flags", 0) & 2**4) or ("Bold" in span.get("font", ""))
@@ -225,7 +217,6 @@ def extract_structured_text(page):
                         if core:
                             text = f"{leading}**{core}**{trailing}"
                 line_text += text
-
             line_text = line_text.strip()
             if not line_text: continue
             if para_text.endswith("-"):
@@ -302,34 +293,29 @@ if uploaded_file:
 
                 if st.button("🚀 추출 실행"):
                     with st.spinner("논문 구조를 분석 중입니다..."):
-
                         if "AI" in extract_mode:
                             try:
                                 pix_ocr = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
                                 img_ocr = Image.open(io.BytesIO(pix_ocr.tobytes()))
                                 prompt = """이 논문 페이지를 아래 규칙에 따라 정확히 추출하세요.
-
 [규칙]
 1. 논문 대제목 → --- 구분선 후 **굵게**
-2. 섹션 제목(1. Introduction 등) → **굵게**
+2. 섹션 제목 → **굵게**
 3. 소소제목 → ***굵게이탤릭***
-4. Abstract/요약 → > 📌 **Abstract** 인용블록
-5. Keywords → > 🔑 키워드 인용블록
+4. Abstract → > 📌 **Abstract** 인용블록
+5. Keywords → > 🔑 인용블록
 6. 본문 → 일반 텍스트, 문단 구분 유지
-7. 표 → 반드시 마크다운 표(| col | col |) 형식으로 변환
-8. 참고문헌 → --- 구분선 후 **References** 섹션
+7. 표 → 마크다운 표(| col |) 형식으로 변환
+8. 참고문헌 → --- 후 **References**
 9. 2단 컬럼이면 왼쪽 먼저, 오른쪽 나중에
-10. 원문 순서 절대 바꾸지 말 것
-
-논문 원본 형식을 최대한 살려서 추출하세요."""
+10. 원문 순서 절대 바꾸지 말 것"""
                                 response = model.generate_content([prompt, img_ocr])
-                                st.session_state.request_count_today += 1  # ✅ 카운트
+                                st.session_state.request_count_today += 1
                                 st.session_state[f"ocr_{page_num}"] = response.text
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"분석 오류: {e}")
                         else:
-                            # 고속 추출 = 토큰 0
                             result_text = extract_structured_text(page)
                             st.session_state[f"ocr_{page_num}"] = result_text
                             st.rerun()
