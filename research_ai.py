@@ -224,7 +224,6 @@ if uploaded_file:
         st.subheader("💬 데이터 및 이미지 질의응답")
 
 # [수정] 지저분한 이중 버튼을 없애고 단일 통합창으로 깔끔하게 롤백했습니다.
-        st.info("💡 팁: 아래 회색 점선 박스를 마우스로 딱 한 번만 클릭한 뒤 **Ctrl+V**를 누르면 캡처 사진이 즉시 들어갑니다.")
         data_img = st.file_uploader("📸 이미지 입력창 (파일 업로드 & 화면 캡처 붙여넣기 겸용)", type=["png", "jpg", "jpeg"])
         
         if data_img: st.image(data_img, width=300)
