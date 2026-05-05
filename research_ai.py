@@ -1,4 +1,6 @@
 import streamlit as st
+import pandas as pd
+import streamlit as st
 import google.generativeai as genai
 import fitz  # PyMuPDF
 from PIL import Image
@@ -228,7 +230,6 @@ if uploaded_file:
         
         if data_img: st.image(data_img, width=300)
         chat_query = st.text_area("질문을 입력하세요", height=100)
-       from streamlit_paste_button import paste_image_button
 
 result = paste_image_button("📋 캡처 붙여넣기 (Ctrl+V)")
 
