@@ -228,6 +228,13 @@ if uploaded_file:
         
         if data_img: st.image(data_img, width=300)
         chat_query = st.text_area("질문을 입력하세요", height=100)
+       from streamlit_paste_button import paste_image_button
+
+result = paste_image_button("📋 캡처 붙여넣기 (Ctrl+V)")
+
+if result.image_data is not None:
+    st.image(result.image_data, width=300)
+
         if st.button("🚀 분석 전송"):
             if chat_query or data_img:
                 st.session_state.chat_history.append({"role": "user", "content": chat_query})
