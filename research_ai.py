@@ -42,18 +42,18 @@ def check_password():
 
 check_password()
 
-# ✅ 수정: gemini-2.0-flash-exp → gemini-2.0-flash 로 변경
+# ✅ 수정 (models/ 제거)
 MODEL_MAP = {
-    "⚡ Gemini 1.5 Flash (기본 추천)":   "models/gemini-1.5-flash",
-    "🚀 Gemini 2.0 Flash (최신)":        "models/gemini-2.0-flash",
-    "🧠 Gemini 1.5 Pro (심층 분석)":     "models/gemini-1.5-pro",
+    "⚡ Gemini 1.5 Flash (기본 추천)":   "gemini-1.5-flash",
+    "🚀 Gemini 2.0 Flash (최신)":        "gemini-2.0-flash",
+    "🧠 Gemini 1.5 Pro (심층 분석)":     "gemini-1.5-pro",
 }
 
 # ✅ 수정: 모델별 하루 무료 한도
 MODEL_LIMIT = {
-    "models/gemini-1.5-flash": 1500,
-    "models/gemini-2.0-flash": 1500,
-    "models/gemini-1.5-pro":   50,
+    "gemini-1.5-flash": 1500,
+    "gemini-2.0-flash": 1500,
+    "gemini-1.5-pro":   50,
 }
 
 @st.cache_resource
