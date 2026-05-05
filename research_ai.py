@@ -249,14 +249,30 @@ if uploaded_file:
 
         chat_query = st.text_area("질문을 입력하세요", height=100)
 
-        if st.button("🚀 분석 전송"):
+      if st.button("🚀 분석 전송"):
             if chat_query or data_img:
                 st.session_state.chat_history.append({"role": "user", "content": chat_query})
                 with st.spinner("AI 분석 중..."):
-                    contents = [f"생체역학 전문가로서 답변하세요: {chat_query}"]
-                    if data_img: contents.append(Image.open(data_img))
+
+                    # ✅ 수정: 이미지 있을 때와 없을 때 분리 처리
+                    if data_img is not None:
+                        try:
+                            # ✅ 수정: PIL Image면 바로 변환, 파일이면 열어서 변환
+                            if isinstance(data_img, Image.Image):
+                                img_for_gemini = data_img.convert("RGB")
+                            else:
+                                img_for_gemini = Image.open(data_img).convert("RGB")
+
+                            contents = [
+                                f"생체역학 전문가로서 이미지를 보고 답변하세요: {chat_query}",
+                                img_for_gemini  # ✅ 수정: RGB 변환된 이미지 전달
+                            ]
+                        except Exception as e:
+                            st.error(f"이미지 변환 오류: {e}")
+                            contents = f"생체역학 전문가로서 답변하세요: {chat_query}"
+                    else:
+                        # ✅ 텍스트만 있을 때는 문자열로 전달
+                        contents = f"생체역학 전문가로서 답변하세요: {chat_query}"
+
                     ans = safe_gen(contents)
                     st.session_state.chat_history.append({"role": "assistant", "content": ans})
-
-        for msg in st.session_state.chat_history:
-            with st.chat_message(msg["role"]): st.markdown(msg["content"])
