@@ -22,6 +22,8 @@ if "token_used_today" not in st.session_state:
     st.session_state.token_used_today = 0
 if "request_count_today" not in st.session_state:
     st.session_state.request_count_today = 0
+if "available_models" not in st.session_state:
+    st.session_state.available_models = []
 
 # 2. 보안 잠금 시스템
 def check_password():
@@ -40,21 +42,26 @@ def check_password():
 
 check_password()
 
-# 3. 모델 설정
-# ✅ 2025년 5월 기준 정상 작동 모델명으로 교체
-MODEL_MAP = {
-    "⚡ Gemini 2.5 Flash (기본 추천)":  "gemini-2.5-flash-preview-04-17",
-    "🚀 Gemini 2.0 Flash (안정)":       "gemini-2.0-flash",
-    "🧠 Gemini 2.5 Pro (심층 분석)":    "gemini-2.5-pro-preview-03-25",
-}
+# ✅ 핵심: API 키로 실제 사용 가능한 모델 자동 탐색
+def get_available_models():
+    api_key = st.secrets.get("GOOGLE_API_KEY")
+    if not api_key:
+        return []
+    try:
+        genai.configure(api_key=api_key)
+        all_models = genai.list_models()
+        # generateContent 지원 + gemini 모델만 필터
+        available = []
+        for m in all_models:
+            if "generateContent" in m.supported_generation_methods:
+                name = m.name.replace("models/", "")
+                # flash, pro 계열만
+                if "gemini" in name and ("flash" in name or "pro" in name):
+                    available.append(name)
+        return sorted(available)
+    except Exception as e:
+        return []
 
-MODEL_LIMIT = {
-    "gemini-2.5-flash-preview-04-17": 500,
-    "gemini-2.0-flash":               1500,
-    "gemini-2.5-pro-preview-03-25":   25,
-}
-
-# ✅ 핵심 수정: @st.cache_resource 제거 → 캐시 문제 완전 해결
 def get_engine(model_id):
     api_key = st.secrets.get("GOOGLE_API_KEY")
     if not api_key:
@@ -63,16 +70,34 @@ def get_engine(model_id):
         genai.configure(api_key=api_key)
         return genai.GenerativeModel(model_id)
     except Exception as e:
-        st.error(f"연결 오류: {e}")
         return None
 
 # ── 사이드바 ─────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("🔬 생체역학 연구실 엔진 설정")
-    selected_label = st.selectbox("사용할 AI 모델을 고르세요", list(MODEL_MAP.keys()))
-    selected_model_id = MODEL_MAP[selected_label]
 
-    # ✅ 매번 새로 연결 (캐시 없음)
+    # ✅ 사용 가능한 모델 자동 탐색
+    if st.button("🔍 사용 가능한 모델 탐색"):
+        with st.spinner("모델 목록 불러오는 중..."):
+            st.session_state.available_models = get_available_models()
+
+    if not st.session_state.available_models:
+        # 탐색 전 기본 목록 (수동)
+        model_options = [
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-lite",
+            "gemini-1.5-flash",
+            "gemini-1.5-flash-8b",
+            "gemini-1.5-pro",
+            "gemini-2.5-flash-preview-04-17",
+            "gemini-2.5-pro-preview-03-25",
+        ]
+        st.caption("💡 위 버튼을 눌러 실제 사용 가능한 모델을 탐색하세요")
+    else:
+        model_options = st.session_state.available_models
+        st.success(f"✅ {len(model_options)}개 모델 발견!")
+
+    selected_model_id = st.selectbox("사용할 모델을 고르세요", model_options)
     model = get_engine(selected_model_id)
 
     if model:
@@ -82,8 +107,16 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # 실시간 사용량 표시
-    daily_limit = MODEL_LIMIT.get(selected_model_id, 1500)
+    # 모델별 예상 한도
+    if "2.5-pro" in selected_model_id:
+        daily_limit = 25
+    elif "2.5-flash" in selected_model_id:
+        daily_limit = 500
+    elif "1.5-pro" in selected_model_id:
+        daily_limit = 50
+    else:
+        daily_limit = 1500
+
     used = st.session_state.request_count_today
     remaining = max(daily_limit - used, 0)
     usage_pct = min(used / daily_limit, 1.0)
@@ -107,7 +140,7 @@ with st.sidebar:
 | {bar_color} 상태 | **{status}** |
 | 사용 요청 | **{used}회** |
 | 남은 요청 | **{remaining}회** |
-| 하루 한도 | **{daily_limit}회** |
+| 하루 한도(예상) | **{daily_limit}회** |
 """)
 
     if st.button("🔄 사용량 초기화"):
@@ -116,8 +149,8 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    st.caption("※ 사용량은 앱 세션 기준입니다. 매일 자정 Google 서버에서 자동 초기화됩니다.")
-    st.caption("※ 429 오류 시 Flash 모델로 변경하세요.")
+    st.caption("※ 사용량은 앱 세션 기준입니다.")
+    st.caption("※ 429 오류 시 다른 모델로 변경하세요.")
 
 # ── safe_gen ─────────────────────────────────────────────────────────
 def safe_gen(prompt):
@@ -128,9 +161,9 @@ def safe_gen(prompt):
     except Exception as e:
         err = str(e)
         if "429" in err:
-            return "⚠️ 하루 사용량을 초과했습니다. Flash 모델로 변경해 주세요."
+            return "⚠️ 하루 사용량을 초과했습니다. 다른 모델로 변경해 주세요."
         if "404" in err:
-            return "⚠️ 모델을 찾을 수 없습니다. 다른 모델로 변경해 주세요."
+            return "⚠️ 모델을 찾을 수 없습니다. 🔍 모델 탐색 버튼을 눌러 사용 가능한 모델을 확인하세요."
         return f"❌ 오류: {err}"
 
 # ── PDF 표 추출 함수 ─────────────────────────────────────────────────
@@ -180,7 +213,6 @@ def extract_structured_text(page):
     all_items.sort(key=lambda x: x[0])
 
     extracted_parts = []
-
     for _, item_type, content in all_items:
         if item_type == "table":
             extracted_parts.append(f"\n{content}\n")
