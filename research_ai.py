@@ -222,53 +222,45 @@ if uploaded_file:
         st.markdown("---")
         st.subheader("💬 데이터 및 이미지 질의응답")
 
-# [수정] 업로드 버튼 완전 철거 & 붙여넣기 전용 디자인 강제 적용 CSS
-        st.markdown("""
-            <style>
-            /* 2번째 기둥(오른쪽 창) 안의 찾아보기 버튼, 구름 아이콘, 용량제한 텍스트 완전 삭제 */
-            div[data-testid="column"]:nth-child(2) button { display: none !important; }
-            div[data-testid="column"]:nth-child(2) svg { display: none !important; }
-            div[data-testid="column"]:nth-child(2) small { display: none !important; }
-            
-            /* 기존 'Drag and drop' 글자를 투명하게 날려버림 */
-            div[data-testid="column"]:nth-child(2) [data-testid="stFileUploaderDropzoneInstructions"] {
-                color: transparent !important;
-            }
-            
-            /* 투명해진 자리에 붙여넣기 전용 안내문구만 새로 주입 */
-            div[data-testid="column"]:nth-child(2) [data-testid="stFileUploaderDropzoneInstructions"]::before {
-                content: "🖱️ 박스 안을 클릭하고 Ctrl + V";
-                color: #15803d !important;
-                font-size: 16px !important;
-                font-weight: bold !important;
-                display: block !important;
-                text-align: center !important;
-                padding-top: 15px !important;
-                padding-bottom: 15px !important;
-                visibility: visible !important;
-            }
-            
-            /* 오른쪽 박스 전체 배경색과 테두리를 초록색 점선(붙여넣기 느낌)으로 변경 */
-            div[data-testid="column"]:nth-child(2) [data-testid="stFileUploadDropzone"] {
-                background-color: #f0fdf4 !important;
-                border: 2px dashed #4CAF50 !important;
-                border-radius: 10px !important;
-            }
-            </style>
-        """, unsafe_allow_html=True)
-
-        img_col1, img_col2 = st.columns(2)
-        
-        with img_col1:
-            st.markdown("**📁 PC 파일 찾아보기**")
-            # 왼쪽은 버튼이 살아있는 정상적인 파일 업로더
-            img_file = st.file_uploader("파일 업로드", type=["png", "jpg", "jpeg"], label_visibility="collapsed", key="file_btn")
-            
-        with img_col2:
-          st.markdown("---")
+# --- [복구된 기능] 이미지 붙여넣기 및 질의응답 ---
         st.subheader("💬 데이터 및 이미지 질의응답")
-        data_img = st.file_uploader("📸 데이터 캡처본 업로드", type=["png", "jpg", "jpeg"])
-        if data_img: st.image(data_img, width=300)
+        st.caption("아래 박스를 클릭 후 **Ctrl+V**하여 그래프를 붙여넣거나 파일을 올리세요.")
+
+        # 1. 붙여넣기 구역 (HTML/JS)
+        paste_html = """
+        <div id="paste-area" style="border:2px dashed #4CAF50; padding:20px; text-align:center; cursor:pointer; border-radius:10px; background-color:#f9f9f9;">
+            이미지(그래프) 캡처 후 여기 클릭하고 <b>Ctrl+V</b> 하세요
+        </div>
+        <div id="preview-container" style="margin-top:10px; display:none; text-align:center;">
+            <p style="color:#4CAF50; font-weight:bold;">✅ 이미지 인식됨</p>
+            <img id="preview-img" style="max-width:100%; border-radius:5px; border:1px solid #ccc;"/>
+        </div>
+        <script>
+            document.addEventListener('paste', function(e) {
+                var items = e.clipboardData.items;
+                for (var i = 0; i < items.length; i++) {
+                    if (items[i].type.indexOf('image') !== -1) {
+                        var blob = items[i].getAsFile();
+                        var reader = new FileReader();
+                        reader.onload = function(event) {
+                            document.getElementById('preview-img').src = event.target.result;
+                            document.getElementById('preview-container').style.display = 'block';
+                            document.getElementById('paste-area').innerHTML = "<b>이미지가 교체되었습니다.</b>";
+                        };
+                        reader.readAsDataURL(blob);
+                    }
+                }
+            });
+        </script>
+        """
+        components.html(paste_html, height=250)
+
+        # 2. 파일 업로더 (안전장치 및 실제 데이터 전송용)
+        data_img = st.file_uploader("📸 또는 파일로 직접 업로드", type=["png", "jpg", "jpeg"])
+        if data_img:
+            st.image(data_img, caption="업로드된 데이터", width=300)
+
+        chat_query = st.text_area("질문을 입력해주세요", height=100)
         
   
         chat_query = st.text_area("질문을 입력하세요", height=100)
