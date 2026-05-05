@@ -222,45 +222,36 @@ if uploaded_file:
         st.markdown("---")
         st.subheader("💬 데이터 및 이미지 질의응답")
 
-# --- [복구된 기능] 이미지 붙여넣기 및 질의응답 ---
-        st.subheader("💬 데이터 및 이미지 질의응답")
-        st.caption("아래 박스를 클릭 후 **Ctrl+V**하여 그래프를 붙여넣거나 파일을 올리세요.")
+# [핵심] 붙여넣기 기능을 방해하지 않는 정밀 CSS
+        st.markdown("""
+            <style>
+            /* 오른쪽 붙여넣기 존 디자인 */
+            div[data-testid="column"]:nth-of-type(2) [data-testid="stFileUploadDropzone"] {
+                border: 2px dashed #15803d !important;
+                background-color: #f0fdf4 !important;
+                min-height: 100px !important;
+            }
+            /* 버튼은 유지하되 텍스트로 가이드만 변경 (완전히 지우면 붙여넣기 인식이 안 될 수 있음) */
+            div[data-testid="column"]:nth-of-type(2) [data-testid="stFileUploaderDropzoneInstructions"] span {
+                display: none;
+            }
+            div[data-testid="column"]:nth-of-type(2) [data-testid="stFileUploaderDropzoneInstructions"]::after {
+                content: "🖱️ 클릭(탐색기 닫기) 후 Ctrl+V";
+                font-weight: bold;
+                color: #15803d;
+            }
+            </style>
+        """, unsafe_allow_html=True)
 
-        # 1. 붙여넣기 구역 (HTML/JS)
-        paste_html = """
-        <div id="paste-area" style="border:2px dashed #4CAF50; padding:20px; text-align:center; cursor:pointer; border-radius:10px; background-color:#f9f9f9;">
-            이미지(그래프) 캡처 후 여기 클릭하고 <b>Ctrl+V</b> 하세요
-        </div>
-        <div id="preview-container" style="margin-top:10px; display:none; text-align:center;">
-            <p style="color:#4CAF50; font-weight:bold;">✅ 이미지 인식됨</p>
-            <img id="preview-img" style="max-width:100%; border-radius:5px; border:1px solid #ccc;"/>
-        </div>
-        <script>
-            document.addEventListener('paste', function(e) {
-                var items = e.clipboardData.items;
-                for (var i = 0; i < items.length; i++) {
-                    if (items[i].type.indexOf('image') !== -1) {
-                        var blob = items[i].getAsFile();
-                        var reader = new FileReader();
-                        reader.onload = function(event) {
-                            document.getElementById('preview-img').src = event.target.result;
-                            document.getElementById('preview-container').style.display = 'block';
-                            document.getElementById('paste-area').innerHTML = "<b>이미지가 교체되었습니다.</b>";
-                        };
-                        reader.readAsDataURL(blob);
-                    }
-                }
-            });
-        </script>
-        """
-        components.html(paste_html, height=250)
+        i_col1, i_col2 = st.columns(2)
+        with i_col1:
+            img_file = st.file_uploader("📁 파일 업로드", type=["png", "jpg", "jpeg"], key="f_up")
+        with i_col2:
+            # key를 다르게 설정하여 간섭 방지
+            img_paste = st.file_uploader("📋 붙여넣기 존", type=["png", "jpg", "jpeg"], key="p_up")
 
-        # 2. 파일 업로더 (안전장치 및 실제 데이터 전송용)
-        data_img = st.file_uploader("📸 또는 파일로 직접 업로드", type=["png", "jpg", "jpeg"])
-        if data_img:
-            st.image(data_img, caption="업로드된 데이터", width=300)
-
-        chat_query = st.text_area("질문을 입력해주세요", height=100)
+        data_img = img_paste if img_paste else img_file
+        if data_img: st.image(data_img, width=300)
         
   
         chat_query = st.text_area("질문을 입력하세요", height=100)
