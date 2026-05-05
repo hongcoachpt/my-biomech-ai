@@ -41,16 +41,17 @@ def check_password():
 check_password()
 
 # 3. 모델 설정
+# ✅ 2025년 5월 기준 정상 작동 모델명으로 교체
 MODEL_MAP = {
-    "⚡ Gemini 1.5 Flash (기본 추천)": "gemini-1.5-flash",
-    "🚀 Gemini 2.0 Flash (최신)":      "gemini-2.0-flash",
-    "🧠 Gemini 1.5 Pro (심층 분석)":   "gemini-1.5-pro",
+    "⚡ Gemini 2.5 Flash (기본 추천)":  "gemini-2.5-flash-preview-04-17",
+    "🚀 Gemini 2.0 Flash (안정)":       "gemini-2.0-flash",
+    "🧠 Gemini 2.5 Pro (심층 분석)":    "gemini-2.5-pro-preview-03-25",
 }
 
 MODEL_LIMIT = {
-    "gemini-1.5-flash": 1500,
-    "gemini-2.0-flash": 1500,
-    "gemini-1.5-pro":   50,
+    "gemini-2.5-flash-preview-04-17": 500,
+    "gemini-2.0-flash":               1500,
+    "gemini-2.5-pro-preview-03-25":   25,
 }
 
 # ✅ 핵심 수정: @st.cache_resource 제거 → 캐시 문제 완전 해결
