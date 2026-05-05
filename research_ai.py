@@ -6,6 +6,7 @@ import fitz  # PyMuPDF
 from PIL import Image
 import io
 import re
+from streamlit_paste_button import paste_image_button 
 
 # 1. 페이지 설정
 st.set_page_config(layout="wide", page_title="Biomechanics Pro Lab", page_icon="🔬")
@@ -225,16 +226,28 @@ if uploaded_file:
         st.markdown("---")
         st.subheader("💬 데이터 및 이미지 질의응답")
 
-# [수정] 지저분한 이중 버튼을 없애고 단일 통합창으로 깔끔하게 롤백했습니다.
-        data_img = st.file_uploader("📸 이미지 입력창 (파일 업로드 & 화면 캡처 붙여넣기 겸용)", type=["png", "jpg", "jpeg"])
-        
-        if data_img: st.image(data_img, width=300)
+  # ✅ 수정: 기존 file_uploader 삭제하고 붙여넣기 버튼으로 교체
+        st.info("📋 아래 버튼 클릭 후 Ctrl+V 하면 캡처 이미지가 바로 들어갑니다")
+        paste_result = paste_image_button(
+            label="📋 캡처 이미지 붙여넣기 (Ctrl+V)",
+            background_color="#f0fdf4",
+            hover_background_color="#dcfce7",
+        )
+
+        # ✅ 수정: 붙여넣기 결과 처리
+        if paste_result.image_data is not None:
+            st.image(paste_result.image_data, width=300)
+            data_img = paste_result.image_data
+        else:
+            data_img = None
+
+        # ✅ 수정: 파일 업로드도 함께 지원 (선택)
+        uploaded_img = st.file_uploader("📂 또는 파일로 업로드", type=["png", "jpg", "jpeg"])
+        if uploaded_img:
+            st.image(uploaded_img, width=300)
+            data_img = Image.open(uploaded_img)
+
         chat_query = st.text_area("질문을 입력하세요", height=100)
-
-result = paste_image_button("📋 캡처 붙여넣기 (Ctrl+V)")
-
-if result.image_data is not None:
-    st.image(result.image_data, width=300)
 
         if st.button("🚀 분석 전송"):
             if chat_query or data_img:
