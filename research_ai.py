@@ -42,7 +42,7 @@ def check_password():
 
 check_password()
 
-# ✅ 핵심: API 키로 실제 사용 가능한 모델 자동 탐색
+# 사용 가능한 모델 자동 탐색
 def get_available_models():
     api_key = st.secrets.get("GOOGLE_API_KEY")
     if not api_key:
@@ -50,16 +50,14 @@ def get_available_models():
     try:
         genai.configure(api_key=api_key)
         all_models = genai.list_models()
-        # generateContent 지원 + gemini 모델만 필터
         available = []
         for m in all_models:
             if "generateContent" in m.supported_generation_methods:
                 name = m.name.replace("models/", "")
-                # flash, pro 계열만
                 if "gemini" in name and ("flash" in name or "pro" in name):
                     available.append(name)
         return sorted(available)
-    except Exception as e:
+    except Exception:
         return []
 
 def get_engine(model_id):
@@ -69,20 +67,18 @@ def get_engine(model_id):
     try:
         genai.configure(api_key=api_key)
         return genai.GenerativeModel(model_id)
-    except Exception as e:
+    except Exception:
         return None
 
 # ── 사이드바 ─────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("🔬 생체역학 연구실 엔진 설정")
 
-    # ✅ 사용 가능한 모델 자동 탐색
     if st.button("🔍 사용 가능한 모델 탐색"):
         with st.spinner("모델 목록 불러오는 중..."):
             st.session_state.available_models = get_available_models()
 
     if not st.session_state.available_models:
-        # 탐색 전 기본 목록 (수동)
         model_options = [
             "gemini-2.0-flash",
             "gemini-2.0-flash-lite",
@@ -107,7 +103,6 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # 모델별 예상 한도
     if "2.5-pro" in selected_model_id:
         daily_limit = 25
     elif "2.5-flash" in selected_model_id:
@@ -163,10 +158,10 @@ def safe_gen(prompt):
         if "429" in err:
             return "⚠️ 하루 사용량을 초과했습니다. 다른 모델로 변경해 주세요."
         if "404" in err:
-            return "⚠️ 모델을 찾을 수 없습니다. 🔍 모델 탐색 버튼을 눌러 사용 가능한 모델을 확인하세요."
+            return "⚠️ 모델을 찾을 수 없습니다. 🔍 모델 탐색 버튼을 눌러 확인하세요."
         return f"❌ 오류: {err}"
 
-# ── PDF 표 추출 함수 ─────────────────────────────────────────────────
+# ── PDF 표 추출 ──────────────────────────────────────────────────────
 def extract_tables_from_page(page):
     tables = page.find_tables()
     table_md_list = []
@@ -184,7 +179,7 @@ def extract_tables_from_page(page):
                 pass
     return table_md_list, table_bboxes
 
-# ── 고속 구조 추출 함수 ──────────────────────────────────────────────
+# ── 고속 구조 추출 ───────────────────────────────────────────────────
 def extract_structured_text(page):
     table_md_list, table_bboxes = extract_tables_from_page(page)
     blocks = page.get_text("dict", sort=True)["blocks"]
@@ -361,7 +356,7 @@ if uploaded_file:
 
         with col_tool:
             st.subheader("🧪 문단 정밀 분석")
-            raw_input = st.text_area("분석할 문단을 여기에 붙여넣으세요", height=200)
+            raw_input = st.text_area("분석할 문단을 여기에 붙여넣으세요", height=150)
 
             c1, c2 = st.columns(2)
 
@@ -379,17 +374,67 @@ if uploaded_file:
                             f"생체역학 박사로서 상세 분석하세요:\n\n{raw_input}"
                         )
 
+            # ✅ 수정: 직역/분석 결과를 탭으로 크게 표시
             if st.session_state.translation_result or st.session_state.analysis_result:
                 st.markdown("---")
-                r1, r2 = st.columns(2)
-                with r1:
+
+                tab1, tab2 = st.tabs(["🌐 전문 직역 결과", "🧠 심층 역학 분석 결과"])
+
+                with tab1:
                     if st.session_state.translation_result:
-                        st.markdown("#### 🌐 전문 직역")
-                        st.info(st.session_state.translation_result)
-                with r2:
+                        # ✅ 수정: 스크롤 가능한 큰 박스로 표시
+                        st.markdown(
+                            f"""
+                            <div style="
+                                background-color: #eff6ff;
+                                border-left: 5px solid #3b82f6;
+                                border-radius: 8px;
+                                padding: 20px;
+                                font-size: 15px;
+                                line-height: 1.8;
+                                max-height: 600px;
+                                overflow-y: auto;
+                                white-space: pre-wrap;
+                                word-wrap: break-word;
+                            ">
+{st.session_state.translation_result}
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                        # 복사용 텍스트창도 함께
+                        with st.expander("📋 텍스트 복사용"):
+                            st.text_area("", st.session_state.translation_result,
+                                        height=300, label_visibility="collapsed")
+                    else:
+                        st.info("직역 결과가 없습니다. 위에서 실행하세요.")
+
+                with tab2:
                     if st.session_state.analysis_result:
-                        st.markdown("#### 🧠 심층 역학 분석")
-                        st.success(st.session_state.analysis_result)
+                        st.markdown(
+                            f"""
+                            <div style="
+                                background-color: #f0fdf4;
+                                border-left: 5px solid #22c55e;
+                                border-radius: 8px;
+                                padding: 20px;
+                                font-size: 15px;
+                                line-height: 1.8;
+                                max-height: 600px;
+                                overflow-y: auto;
+                                white-space: pre-wrap;
+                                word-wrap: break-word;
+                            ">
+{st.session_state.analysis_result}
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                        with st.expander("📋 텍스트 복사용"):
+                            st.text_area("", st.session_state.analysis_result,
+                                        height=300, label_visibility="collapsed")
+                    else:
+                        st.info("분석 결과가 없습니다. 위에서 실행하세요.")
 
                 if st.button("🗑️ 결과 초기화"):
                     st.session_state.translation_result = ""
