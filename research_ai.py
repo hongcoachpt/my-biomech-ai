@@ -30,7 +30,39 @@ def check_password():
     st.stop()
 
 check_password()
+# 3. [추가됨] 모델 자유 선택 및 연결 시스템
+MODEL_MAP = {
+    "⚡ Gemini 1.5 Flash (가성비/빠른 추출)": "models/gemini-1.5-flash",
+    "🧠 Gemini 1.5 Pro (고성능/심층 분석)": "models/gemini-1.5-pro",
+    "🚀 Gemini 2.0 Flash (최신/초고속)": "models/gemini-2.0-flash-exp"
+}
 
+@st.cache_resource
+def get_engine(model_id):
+    api_key = st.secrets.get("GOOGLE_API_KEY")
+    if not api_key: return None
+    try:
+        genai.configure(api_key=api_key)
+        # 404 에러 방지를 위해 박사님이 안정성을 확인한 주소 방식 유지
+        return genai.GenerativeModel(model_id)
+    except Exception as e:
+        st.error(f"연결 오류: {e}")
+        return None
+
+# 사이드바에 박사님을 위한 모델 조종석 추가
+with st.sidebar:
+    st.header("🔬 연구실 엔진 설정")
+    selected_label = st.selectbox("사용할 AI 모델을 고르세요", list(MODEL_MAP.keys()))
+    selected_model_id = MODEL_MAP[selected_label]
+    model = get_engine(selected_model_id)
+    
+    if model:
+        st.success(f"✅ 가동 중: {selected_model_id}")
+    else:
+        st.error("❌ API Key 확인 필요")
+        
+    st.markdown("---")
+    st.caption("※ 분석 중 429 에러(할당량 초과)가 발생하면, 즉시 Flash 모델로 변경해서 이어가세요.")
 # 3. 모델 연결 시스템
 @st.cache_resource
 def init_gemini():
