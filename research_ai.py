@@ -223,11 +223,9 @@ if uploaded_file:
         st.markdown("---")
         st.subheader("💬 데이터 및 이미지 질의응답")
 
-# 🚩🚩🚩 [수정 확인 포인트] 🚩🚩🚩
-st.info("💡 **캡처 이미지 붙여넣기:** 아래 회색 점선 박스 안을 마우스로 한 번 클릭하고 **Ctrl+V**를 누르세요.")
-        
-        # 띄어쓰기(들여쓰기) 오차 0%로 완벽하게 복구했습니다.
-        data_img = st.file_uploader("📂 파일 업로드 또는 Ctrl+V 붙여넣기", type=["png", "jpg", "jpeg"], label_visibility="collapsed")
+# [수정] 지저분한 이중 버튼을 없애고 단일 통합창으로 깔끔하게 롤백했습니다.
+        st.info("💡 팁: 아래 회색 점선 박스를 마우스로 딱 한 번만 클릭한 뒤 **Ctrl+V**를 누르면 캡처 사진이 즉시 들어갑니다.")
+        data_img = st.file_uploader("📸 이미지 입력창 (파일 업로드 & 화면 캡처 붙여넣기 겸용)", type=["png", "jpg", "jpeg"])
         
         if data_img: st.image(data_img, width=300)
         chat_query = st.text_area("질문을 입력하세요", height=100)
