@@ -221,13 +221,19 @@ if uploaded_file:
 
         st.markdown("---")
         st.subheader("💬 데이터 및 이미지 질의응답")
-        # [수정됨] 캡처 후 붙여넣기 안내 문구 추가
-        st.info("💡 팁: 논문의 그래프나 표를 화면 캡처한 뒤, 아래 박스를 마우스로 클릭하고 **Ctrl+V (아이패드는 꾹 눌러서 붙여넣기)** 하시면 바로 들어갑니다!")
-        data_img = st.file_uploader("📸 사진 업로드 (클릭 후 붙여넣기 지원)", type=["png", "jpg", "jpeg"])
+       # [수정됨] 업로드 창과 붙여넣기 창을 두 개의 기둥으로 분리
+        img_col1, img_col2 = st.columns(2)
         
-        if data_img: st.image(data_img, width=300)
-
-        data_img = st.file_uploader("📸 사진 업로드", type=["png", "jpg", "jpeg"])
+        with img_col1:
+            img_file = st.file_uploader("📁 파일 찾아보기 (PC 업로드)", type=["png", "jpg", "jpeg"], key="file_up")
+            
+        with img_col2:
+            st.markdown("<div style='text-align: center; font-size: 14px;'>💡 빈 박스를 클릭하고 <b>Ctrl+V</b></div>", unsafe_allow_html=True)
+            img_paste = st.file_uploader("📋 캡처 이미지 붙여넣기", type=["png", "jpg", "jpeg"], key="paste_up")
+            
+        # 두 창 중 하나라도 이미지가 들어오면 data_img로 통합 처리
+        data_img = img_paste if img_paste else img_file
+        
         if data_img: st.image(data_img, width=300)
             
 
