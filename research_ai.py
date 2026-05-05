@@ -108,150 +108,138 @@ if uploaded_file:
 
             st.markdown("---")
 
-          with st.expander("📋 논문 텍스트 추출 (논문 형식 보존 모드)", expanded=True):
+            # ✅ 수정: 논문 형식 보존 추출로 업그레이드
+            with st.expander("📋 논문 텍스트 추출 (논문 형식 보존 모드)", expanded=True):
 
-    extract_mode = st.radio(
-        "추출 방식 선택",
-        ["🤖 AI 정밀 판독 (이미지→텍스트)", "⚡ 고속 구조 추출 (PDF 직접 파싱)"],
-        horizontal=True
-    )
+                extract_mode = st.radio(
+                    "추출 방식 선택",
+                    ["🤖 AI 정밀 판독 (이미지→텍스트)", "⚡ 고속 구조 추출 (PDF 직접 파싱)"],
+                    horizontal=True
+                )
 
-    if st.button("🚀 추출 실행"):
-        with st.spinner("논문 구조를 분석 중입니다..."):
+                if st.button("🚀 추출 실행"):
+                    with st.spinner("논문 구조를 분석 중입니다..."):
 
-            # ── AI 판독 모드 ──────────────────────────────────────
-            if "AI" in extract_mode:
-                try:
-                    pix_ocr = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
-                    img_ocr = Image.open(io.BytesIO(pix_ocr.tobytes()))
-                    prompt = """이 논문 페이지를 아래 규칙에 따라 정확히 추출하세요.
+                        # ── AI 판독 모드 ──────────────────────────
+                        if "AI" in extract_mode:
+                            try:
+                                pix_ocr = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
+                                img_ocr = Image.open(io.BytesIO(pix_ocr.tobytes()))
+                                prompt = """이 논문 페이지를 아래 규칙에 따라 정확히 추출하세요.
 
 [규칙]
 1. 제목(가장 큰 글씨) → ## 제목
-2. 소제목(중간 글씨) → ### 소제목  
+2. 소제목(중간 글씨) → ### 소제목
 3. Abstract/요약 → > (인용 블록으로 감싸기)
 4. 본문 → 일반 텍스트, 문단 구분 유지
 5. 표 → 마크다운 표(| 형식)로 변환
 6. 참고문헌 → #### References 아래 번호 목록
 7. 2단 컬럼이면 왼쪽 컬럼 먼저, 오른쪽 컬럼 나중에
 8. 수식은 그대로 텍스트로 표현
-9. '#' 기호로 글씨 크기 키우지 말 것 (## ### 만 허용)
-10. 원문 순서를 절대 바꾸지 말 것
+9. 원문 순서를 절대 바꾸지 말 것
 
 논문 형식을 최대한 살려서 추출하세요."""
-                    response = model.generate_content([prompt, img_ocr])
-                    st.session_state[f"ocr_{page_num}"] = response.text
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"분석 오류: {e}")
+                                response = model.generate_content([prompt, img_ocr])
+                                st.session_state[f"ocr_{page_num}"] = response.text
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"분석 오류: {e}")
 
-            # ── 고속 구조 추출 모드 ───────────────────────────────
-            else:
-                blocks = page.get_text("dict", sort=True)["blocks"]
-
-                # 페이지 중앙값 계산 (2단 컬럼 감지용)
-                page_width = page.rect.width
-                mid_x = page_width / 2
-
-                # 블록을 왼쪽/오른쪽 컬럼으로 분리
-                left_blocks  = [b for b in blocks if b.get("type") == 0 and b["bbox"][0] < mid_x - 20]
-                right_blocks = [b for b in blocks if b.get("type") == 0 and b["bbox"][0] >= mid_x - 20]
-
-                # 단이 실제로 나뉘어 있는지 확인
-                is_two_column = (
-                    len(left_blocks) > 1 and len(right_blocks) > 1
-                    and max((b["bbox"][2] for b in left_blocks), default=0) < mid_x + 30
-                )
-
-                sorted_blocks = (left_blocks + right_blocks) if is_two_column else [
-                    b for b in blocks if b.get("type") == 0
-                ]
-
-                extracted_parts = []
-
-                for b in sorted_blocks:
-                    para_text = ""
-                    max_size = 0
-                    bold_char_count = 0
-                    total_char_count = 0
-                    all_spans = []
-
-                    for line in b.get("lines", []):
-                        for span in line.get("spans", []):
-                            text = span.get("text", "").strip()
-                            if text:
-                                all_spans.append(span)
-                                size = span.get("size", 0)
-                                max_size = max(max_size, size)
-                                chars = len(text)
-                                total_char_count += chars
-                                is_bold = (span.get("flags", 0) & 2**4) or ("Bold" in span.get("font", ""))
-                                if is_bold:
-                                    bold_char_count += chars
-
-                    # 블록 전체 텍스트 조합
-                    for line in b.get("lines", []):
-                        line_text = ""
-                        for span in line.get("spans", []):
-                            text = span.get("text", "")
-                            if not text.strip():
-                                line_text += text
-                                continue
-                            is_bold = (span.get("flags", 0) & 2**4) or ("Bold" in span.get("font", ""))
-                            if is_bold:
-                                m = re.match(r'^(\s*)(.*?)(\s*)$', text)
-                                if m:
-                                    leading, core, trailing = m.groups()
-                                    if core:
-                                        text = f"{leading}**{core}**{trailing}"
-                            line_text += text
-
-                        line_text = line_text.strip()
-                        if not line_text: continue
-                        if para_text.endswith("-"):
-                            para_text = para_text[:-1] + line_text
+                        # ── 고속 구조 추출 모드 ───────────────────
                         else:
-                            para_text = (para_text + " " + line_text).strip() if para_text else line_text
+                            blocks = page.get_text("dict", sort=True)["blocks"]
 
-                    if not para_text.strip():
-                        continue
+                            page_width = page.rect.width
+                            mid_x = page_width / 2
 
-                    clean = para_text.replace("**", "").strip()
+                            left_blocks  = [b for b in blocks if b.get("type") == 0 and b["bbox"][0] < mid_x - 20]
+                            right_blocks = [b for b in blocks if b.get("type") == 0 and b["bbox"][0] >= mid_x - 20]
 
-                    # ── 계층별 제목 분류 ──────────────────────────
-                    if total_char_count < 120:
-                        if max_size >= 16:
-                            # 논문 대제목
-                            extracted_parts.append(f"\n## {clean}\n")
-                        elif max_size >= 13 or (bold_char_count / max(total_char_count,1)) > 0.7:
-                            # 소제목 (1., 2., Introduction 등)
-                            extracted_parts.append(f"\n### {clean}\n")
-                        elif max_size >= 11 and (bold_char_count / max(total_char_count,1)) > 0.4:
-                            # 소소제목
-                            extracted_parts.append(f"\n#### {clean}\n")
-                        else:
-                            extracted_parts.append(para_text)
-                    else:
-                        # Abstract 감지
-                        if any(kw in clean[:30].lower() for kw in ["abstract", "요약", "summary"]):
-                            extracted_parts.append(f"\n> **Abstract**\n> {clean}\n")
-                        # 참고문헌 감지
-                        elif any(kw in clean[:20].lower() for kw in ["reference", "bibliography", "참고문헌"]):
-                            extracted_parts.append(f"\n#### References\n{clean}")
-                        else:
-                            extracted_parts.append(para_text)
+                            is_two_column = (
+                                len(left_blocks) > 1 and len(right_blocks) > 1
+                                and max((b["bbox"][2] for b in left_blocks), default=0) < mid_x + 30
+                            )
 
-                st.session_state[f"ocr_{page_num}"] = "\n\n".join(extracted_parts)
-                st.rerun()
+                            sorted_blocks = (left_blocks + right_blocks) if is_two_column else [
+                                b for b in blocks if b.get("type") == 0
+                            ]
 
-    # 결과 출력
-    if f"ocr_{page_num}" in st.session_state:
-        final_text = st.session_state[f"ocr_{page_num}"]
-        st.markdown(final_text)
-        
-        # 복사용 텍스트 박스
-        with st.expander("📄 텍스트 복사용 (원문 그대로)"):
-            st.text_area("", final_text, height=300, label_visibility="collapsed")
+                            extracted_parts = []
+
+                            for b in sorted_blocks:
+                                para_text = ""
+                                max_size = 0
+                                bold_char_count = 0
+                                total_char_count = 0
+
+                                for line in b.get("lines", []):
+                                    for span in line.get("spans", []):
+                                        text = span.get("text", "").strip()
+                                        if text:
+                                            size = span.get("size", 0)
+                                            max_size = max(max_size, size)
+                                            chars = len(text)
+                                            total_char_count += chars
+                                            is_bold = (span.get("flags", 0) & 2**4) or ("Bold" in span.get("font", ""))
+                                            if is_bold:
+                                                bold_char_count += chars
+
+                                for line in b.get("lines", []):
+                                    line_text = ""
+                                    for span in line.get("spans", []):
+                                        text = span.get("text", "")
+                                        if not text.strip():
+                                            line_text += text
+                                            continue
+                                        is_bold = (span.get("flags", 0) & 2**4) or ("Bold" in span.get("font", ""))
+                                        if is_bold:
+                                            m = re.match(r'^(\s*)(.*?)(\s*)$', text)
+                                            if m:
+                                                leading, core, trailing = m.groups()
+                                                if core:
+                                                    text = f"{leading}**{core}**{trailing}"
+                                        line_text += text
+
+                                    line_text = line_text.strip()
+                                    if not line_text: continue
+                                    if para_text.endswith("-"):
+                                        para_text = para_text[:-1] + line_text
+                                    else:
+                                        para_text = (para_text + " " + line_text).strip() if para_text else line_text
+
+                                if not para_text.strip():
+                                    continue
+
+                                clean = para_text.replace("**", "").strip()
+
+                                # ── 계층별 제목 분류 ─────────────────
+                                if total_char_count < 120:
+                                    if max_size >= 16:
+                                        extracted_parts.append(f"\n## {clean}\n")
+                                    elif max_size >= 13 or (bold_char_count / max(total_char_count, 1)) > 0.7:
+                                        extracted_parts.append(f"\n### {clean}\n")
+                                    elif max_size >= 11 and (bold_char_count / max(total_char_count, 1)) > 0.4:
+                                        extracted_parts.append(f"\n#### {clean}\n")
+                                    else:
+                                        extracted_parts.append(para_text)
+                                else:
+                                    if any(kw in clean[:30].lower() for kw in ["abstract", "요약", "summary"]):
+                                        extracted_parts.append(f"\n> **Abstract**\n> {clean}\n")
+                                    elif any(kw in clean[:20].lower() for kw in ["reference", "bibliography", "참고문헌"]):
+                                        extracted_parts.append(f"\n#### References\n{clean}")
+                                    else:
+                                        extracted_parts.append(para_text)
+
+                            st.session_state[f"ocr_{page_num}"] = "\n\n".join(extracted_parts)
+                            st.rerun()
+
+                # 결과 출력
+                if f"ocr_{page_num}" in st.session_state:
+                    final_text = st.session_state[f"ocr_{page_num}"]
+                    st.markdown(final_text)
+
+                    with st.expander("📄 텍스트 복사용 (원문 그대로)"):
+                        st.text_area("", final_text, height=300, label_visibility="collapsed")
 
         with col_tool:
             st.subheader("🧪 문단 정밀 분석")
@@ -278,7 +266,6 @@ if uploaded_file:
             st.markdown("---")
             st.subheader("💬 데이터 및 이미지 질의응답")
 
-            # ✅ 수정: 캡처 붙여넣기 버튼
             st.info("📋 아래 버튼 클릭 후 Ctrl+V 하면 캡처 이미지가 바로 들어갑니다")
             paste_result = paste_image_button(
                 label="📋 캡처 이미지 붙여넣기 (Ctrl+V)",
@@ -286,14 +273,12 @@ if uploaded_file:
                 hover_background_color="#dcfce7",
             )
 
-            # ✅ 수정: 붙여넣기 결과 처리
             if paste_result.image_data is not None:
                 st.image(paste_result.image_data, width=300)
                 data_img = paste_result.image_data
             else:
                 data_img = None
 
-            # ✅ 수정: 파일 업로드도 함께 지원
             uploaded_img = st.file_uploader("📂 또는 파일로 업로드", type=["png", "jpg", "jpeg"])
             if uploaded_img:
                 st.image(uploaded_img, width=300)
@@ -301,7 +286,6 @@ if uploaded_file:
 
             chat_query = st.text_area("질문을 입력하세요", height=100)
 
-            # ✅ 수정: 이미지를 RGB 변환 후 Gemini에 전달
             if st.button("🚀 분석 전송"):
                 if chat_query or data_img:
                     st.session_state.chat_history.append({"role": "user", "content": chat_query})
