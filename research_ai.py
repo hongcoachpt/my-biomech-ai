@@ -223,30 +223,23 @@ if uploaded_file:
         st.subheader("💬 데이터 및 이미지 질의응답")
 
         
-    # [수정] 지저분한 이중 버튼을 없애고 단일 통합창으로 깔끔하게 롤백했습니다.
-        st.info("💡 팁: 아래 회색 점선 박스를 마우스로 딱 한 번만 클릭한 뒤 **Ctrl+V**를 누르면 캡처 사진이 즉시 들어갑니다.")
-        data_img = st.file_uploader("📸 이미지 입력창 (파일 업로드 & 화면 캡처 붙여넣기 겸용)", type=["png", "jpg", "jpeg"])
+   # [수정] 기술적 한계를 반영하여 '진짜 작동하는' 2개의 창으로 분리
+        img_col1, img_col2 = st.columns(2)
+        
+        with img_col1:
+            st.markdown("**📁 PC 파일 찾아보기**")
+            # 탐색기를 띄우는 용도
+            img_file = st.file_uploader("파일 업로드", type=["png", "jpg", "jpeg"], label_visibility="collapsed", key="file_btn")
+            
+        with img_col2:
+            st.markdown("**📋 캡처 붙여넣기 존**")
+            st.caption("👇 빈 박스를 한 번 누르고 **Ctrl+V**")
+            # 복사/붙여넣기를 받는 용도 (업로드 버튼은 어쩔 수 없이 보입니다 😭)
+            img_paste = st.file_uploader("클립보드 붙여넣기", type=["png", "jpg", "jpeg"], label_visibility="collapsed", key="paste_btn")
+            
+        data_img = img_paste if img_paste else img_file
         
         if data_img: st.image(data_img, width=300)
-
-        # [박사님 요청 특별 기능] 팝업창 안 뜨는 가짜 붙여넣기 존
-        st.markdown("""
-        <div style="border: 2px dashed #4CAF50; padding: 20px; border-radius: 10px; background-color: #f0fdf4; text-align: center; cursor: pointer; margin-bottom: 10px;">
-            <h4 style="margin: 0; color: #166534;">🖱️ [팝업 안 뜸] 캡처 붙여넣기 전용 존</h4>
-            <p style="margin: 5px 0 0 0; color: #15803d; font-size: 14px;">
-                탐색기 창 띄우지 마세요! <b>이 초록색 박스 안을 아무 데나 한 번 클릭</b>하시고<br>
-                그대로 <b>Ctrl+V</b>를 누르시면 이미지가 아래에 쏙 들어갑니다.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # 실제 이미지가 꽂히는 진짜 업로더 (여긴 팝업 뜨니까 누를 필요 없음)
-        data_img = st.file_uploader("📂 (PC에 저장된 파일을 찾을 때만 이 버튼을 누르세요)", type=["png", "jpg", "jpeg"])
-        
-        if data_img: st.image(data_img, width=300)
-
-        
-
         chat_query = st.text_area("질문을 입력하세요", height=100)
         if st.button("🚀 분석 전송"):
             if chat_query or data_img:
