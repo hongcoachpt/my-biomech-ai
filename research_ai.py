@@ -221,21 +221,11 @@ if uploaded_file:
 
         st.markdown("---")
         st.subheader("💬 데이터 및 이미지 질의응답")
-       # [수정됨] 업로드 창과 붙여넣기 창을 두 개의 기둥으로 분리
-        img_col1, img_col2 = st.columns(2)
-        
-        with img_col1:
-            img_file = st.file_uploader("📁 파일 찾아보기 (PC 업로드)", type=["png", "jpg", "jpeg"], key="file_up")
-            
-        with img_col2:
-            st.markdown("<div style='text-align: center; font-size: 14px;'>💡 빈 박스를 클릭하고 <b>Ctrl+V</b></div>", unsafe_allow_html=True)
-            img_paste = st.file_uploader("📋 캡처 이미지 붙여넣기", type=["png", "jpg", "jpeg"], key="paste_up")
-            
-        # 두 창 중 하나라도 이미지가 들어오면 data_img로 통합 처리
-        data_img = img_paste if img_paste else img_file
+    # [수정] 지저분한 이중 버튼을 없애고 단일 통합창으로 깔끔하게 롤백했습니다.
+        st.info("💡 팁: 아래 회색 점선 박스를 마우스로 딱 한 번만 클릭한 뒤 **Ctrl+V**를 누르면 캡처 사진이 즉시 들어갑니다.")
+        data_img = st.file_uploader("📸 이미지 입력창 (파일 업로드 & 화면 캡처 붙여넣기 겸용)", type=["png", "jpg", "jpeg"])
         
         if data_img: st.image(data_img, width=300)
-            
 
         chat_query = st.text_area("질문을 입력하세요", height=100)
         if st.button("🚀 분석 전송"):
