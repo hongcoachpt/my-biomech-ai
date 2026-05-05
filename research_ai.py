@@ -12,6 +12,10 @@ st.set_page_config(layout="wide", page_title="Biomechanics Pro Lab", page_icon="
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
+if "translation_result" not in st.session_state:
+    st.session_state.translation_result = ""
+if "analysis_result" not in st.session_state:
+    st.session_state.analysis_result = ""
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -78,6 +82,164 @@ def init_gemini():
 
 model, model_name = init_gemini()
 
+def safe_gen(prompt):
+    try: return model.generate_content(prompt).text
+    except Exception as e:
+        if "429" in str(e): return "⚠️ 하루 사용량을 초과했습니다."
+        return f"❌ 오류: {e}"
+
+# ── PDF 표 추출 함수 ─────────────────────────────────────────────────
+def extract_tables_from_page(page):
+    """PyMuPDF로 표 감지 및 마크다운 변환"""
+    tables = page.find_tables()
+    table_md_list = []
+    table_bboxes = []
+
+    if tables and tables.tables:
+        for table in tables.tables:
+            try:
+                df = table.to_pandas()
+                if df.empty:
+                    continue
+                # 마크다운 표로 변환
+                md = df.to_markdown(index=False)
+                table_md_list.append((table.bbox, md))
+                table_bboxes.append(table.bbox)
+            except Exception:
+                pass
+
+    return table_md_list, table_bboxes
+
+# ── 고속 구조 추출 함수 ──────────────────────────────────────────────
+def extract_structured_text(page):
+    table_md_list, table_bboxes = extract_tables_from_page(page)
+
+    blocks = page.get_text("dict", sort=True)["blocks"]
+    page_width = page.rect.width
+    mid_x = page_width / 2
+
+    # 표 영역과 겹치는 블록 제거용
+    def in_table(bbox):
+        for tb in table_bboxes:
+            if (bbox[0] >= tb[0] - 5 and bbox[1] >= tb[1] - 5
+                    and bbox[2] <= tb[2] + 5 and bbox[3] <= tb[3] + 5):
+                return True
+        return False
+
+    text_blocks = [b for b in blocks if b.get("type") == 0 and not in_table(b["bbox"])]
+
+    # 2단 컬럼 감지
+    left_blocks  = [b for b in text_blocks if b["bbox"][0] < mid_x - 20]
+    right_blocks = [b for b in text_blocks if b["bbox"][0] >= mid_x - 20]
+
+    is_two_column = (
+        len(left_blocks) > 1 and len(right_blocks) > 1
+        and max((b["bbox"][2] for b in left_blocks), default=0) < mid_x + 30
+    )
+
+    sorted_blocks = (left_blocks + right_blocks) if is_two_column else text_blocks
+
+    # 표를 y좌표 기준으로 삽입할 위치 계산
+    # (텍스트 블록 사이에 표를 올바른 위치에 끼워넣기)
+    all_items = []  # (y좌표, 타입, 내용)
+
+    for b in sorted_blocks:
+        y = b["bbox"][1]
+        all_items.append((y, "block", b))
+
+    for bbox, md in table_md_list:
+        y = bbox[1]
+        all_items.append((y, "table", md))
+
+    all_items.sort(key=lambda x: x[0])
+
+    extracted_parts = []
+
+    for _, item_type, content in all_items:
+
+        if item_type == "table":
+            # ✅ 표는 마크다운 표 형식으로 삽입
+            extracted_parts.append(f"\n{content}\n")
+            continue
+
+        b = content
+        para_text = ""
+        max_size = 0
+        bold_char_count = 0
+        total_char_count = 0
+
+        for line in b.get("lines", []):
+            for span in line.get("spans", []):
+                t = span.get("text", "").strip()
+                if t:
+                    size = span.get("size", 0)
+                    max_size = max(max_size, size)
+                    chars = len(t)
+                    total_char_count += chars
+                    is_bold = (span.get("flags", 0) & 2**4) or ("Bold" in span.get("font", ""))
+                    if is_bold:
+                        bold_char_count += chars
+
+        for line in b.get("lines", []):
+            line_text = ""
+            for span in line.get("spans", []):
+                text = span.get("text", "")
+                if not text.strip():
+                    line_text += text
+                    continue
+                is_bold = (span.get("flags", 0) & 2**4) or ("Bold" in span.get("font", ""))
+                if is_bold:
+                    m = re.match(r'^(\s*)(.*?)(\s*)$', text)
+                    if m:
+                        leading, core, trailing = m.groups()
+                        if core:
+                            text = f"{leading}**{core}**{trailing}"
+                line_text += text
+
+            line_text = line_text.strip()
+            if not line_text: continue
+            if para_text.endswith("-"):
+                para_text = para_text[:-1] + line_text
+            else:
+                para_text = (para_text + " " + line_text).strip() if para_text else line_text
+
+        if not para_text.strip():
+            continue
+
+        clean = para_text.replace("**", "").strip()
+        bold_ratio = bold_char_count / max(total_char_count, 1)
+
+        # ── 제목 계층 판별 ────────────────────────────────────────────
+        if total_char_count < 150:
+            if max_size >= 16:
+                # 논문 대제목 → 굵게 + 구분선
+                extracted_parts.append(f"\n---\n**{clean}**\n")
+            elif max_size >= 13 or bold_ratio > 0.75:
+                # 섹션 제목 (1. Introduction 등) → 굵게
+                extracted_parts.append(f"\n**{clean}**\n")
+            elif max_size >= 11 and bold_ratio > 0.4:
+                # 소소제목 → 굵게 이탤릭
+                extracted_parts.append(f"\n***{clean}***\n")
+            else:
+                extracted_parts.append(para_text)
+        else:
+            # 본문 처리
+            lower_clean = clean[:40].lower()
+            if any(kw in lower_clean for kw in ["abstract", "요약", "summary"]):
+                # Abstract → 인용 블록
+                extracted_parts.append(f"\n> 📌 **Abstract**\n>\n> {clean}\n")
+            elif any(kw in lower_clean for kw in ["reference", "bibliography", "참고문헌"]):
+                # 참고문헌 → 별도 섹션
+                extracted_parts.append(f"\n---\n**References**\n\n{clean}")
+            elif any(kw in lower_clean for kw in ["keyword", "key word", "키워드"]):
+                # 키워드 → 강조
+                extracted_parts.append(f"\n> 🔑 {clean}\n")
+            else:
+                extracted_parts.append(para_text)
+
+    return "\n\n".join(extracted_parts)
+
+
 # 4. 메인 UI
 st.title("🔬 홍박사 스마트 생체역학 연구실")
 
@@ -108,7 +270,6 @@ if uploaded_file:
 
             st.markdown("---")
 
-            # ✅ 수정: 논문 형식 보존 추출로 업그레이드
             with st.expander("📋 논문 텍스트 추출 (논문 형식 보존 모드)", expanded=True):
 
                 extract_mode = st.radio(
@@ -120,7 +281,6 @@ if uploaded_file:
                 if st.button("🚀 추출 실행"):
                     with st.spinner("논문 구조를 분석 중입니다..."):
 
-                        # ── AI 판독 모드 ──────────────────────────
                         if "AI" in extract_mode:
                             try:
                                 pix_ocr = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
@@ -128,112 +288,31 @@ if uploaded_file:
                                 prompt = """이 논문 페이지를 아래 규칙에 따라 정확히 추출하세요.
 
 [규칙]
-1. 제목(가장 큰 글씨) → ## 제목
-2. 소제목(중간 글씨) → ### 소제목
-3. Abstract/요약 → > (인용 블록으로 감싸기)
-4. 본문 → 일반 텍스트, 문단 구분 유지
-5. 표 → 마크다운 표(| 형식)로 변환
-6. 참고문헌 → #### References 아래 번호 목록
-7. 2단 컬럼이면 왼쪽 컬럼 먼저, 오른쪽 컬럼 나중에
-8. 수식은 그대로 텍스트로 표현
-9. 원문 순서를 절대 바꾸지 말 것
+1. 논문 대제목 → --- 구분선 후 **굵게**
+2. 섹션 제목(1. Introduction 등) → **굵게**
+3. 소소제목 → ***굵게이탤릭***
+4. Abstract/요약 → > 📌 **Abstract** 인용블록
+5. Keywords → > 🔑 키워드 인용블록
+6. 본문 → 일반 텍스트, 문단 구분 유지
+7. 표 → 반드시 마크다운 표(| col | col |) 형식으로 변환
+8. 참고문헌 → --- 구분선 후 **References** 섹션
+9. 2단 컬럼이면 왼쪽 먼저, 오른쪽 나중에
+10. 수식은 텍스트로 최대한 표현
+11. 원문 순서 절대 바꾸지 말 것
 
-논문 형식을 최대한 살려서 추출하세요."""
+논문 원본 형식을 최대한 살려서 추출하세요."""
                                 response = model.generate_content([prompt, img_ocr])
                                 st.session_state[f"ocr_{page_num}"] = response.text
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"분석 오류: {e}")
 
-                        # ── 고속 구조 추출 모드 ───────────────────
                         else:
-                            blocks = page.get_text("dict", sort=True)["blocks"]
-
-                            page_width = page.rect.width
-                            mid_x = page_width / 2
-
-                            left_blocks  = [b for b in blocks if b.get("type") == 0 and b["bbox"][0] < mid_x - 20]
-                            right_blocks = [b for b in blocks if b.get("type") == 0 and b["bbox"][0] >= mid_x - 20]
-
-                            is_two_column = (
-                                len(left_blocks) > 1 and len(right_blocks) > 1
-                                and max((b["bbox"][2] for b in left_blocks), default=0) < mid_x + 30
-                            )
-
-                            sorted_blocks = (left_blocks + right_blocks) if is_two_column else [
-                                b for b in blocks if b.get("type") == 0
-                            ]
-
-                            extracted_parts = []
-
-                            for b in sorted_blocks:
-                                para_text = ""
-                                max_size = 0
-                                bold_char_count = 0
-                                total_char_count = 0
-
-                                for line in b.get("lines", []):
-                                    for span in line.get("spans", []):
-                                        text = span.get("text", "").strip()
-                                        if text:
-                                            size = span.get("size", 0)
-                                            max_size = max(max_size, size)
-                                            chars = len(text)
-                                            total_char_count += chars
-                                            is_bold = (span.get("flags", 0) & 2**4) or ("Bold" in span.get("font", ""))
-                                            if is_bold:
-                                                bold_char_count += chars
-
-                                for line in b.get("lines", []):
-                                    line_text = ""
-                                    for span in line.get("spans", []):
-                                        text = span.get("text", "")
-                                        if not text.strip():
-                                            line_text += text
-                                            continue
-                                        is_bold = (span.get("flags", 0) & 2**4) or ("Bold" in span.get("font", ""))
-                                        if is_bold:
-                                            m = re.match(r'^(\s*)(.*?)(\s*)$', text)
-                                            if m:
-                                                leading, core, trailing = m.groups()
-                                                if core:
-                                                    text = f"{leading}**{core}**{trailing}"
-                                        line_text += text
-
-                                    line_text = line_text.strip()
-                                    if not line_text: continue
-                                    if para_text.endswith("-"):
-                                        para_text = para_text[:-1] + line_text
-                                    else:
-                                        para_text = (para_text + " " + line_text).strip() if para_text else line_text
-
-                                if not para_text.strip():
-                                    continue
-
-                                clean = para_text.replace("**", "").strip()
-
-                                # ── 계층별 제목 분류 ─────────────────
-                                if total_char_count < 120:
-                                    if max_size >= 16:
-                                        extracted_parts.append(f"\n## {clean}\n")
-                                    elif max_size >= 13 or (bold_char_count / max(total_char_count, 1)) > 0.7:
-                                        extracted_parts.append(f"\n### {clean}\n")
-                                    elif max_size >= 11 and (bold_char_count / max(total_char_count, 1)) > 0.4:
-                                        extracted_parts.append(f"\n#### {clean}\n")
-                                    else:
-                                        extracted_parts.append(para_text)
-                                else:
-                                    if any(kw in clean[:30].lower() for kw in ["abstract", "요약", "summary"]):
-                                        extracted_parts.append(f"\n> **Abstract**\n> {clean}\n")
-                                    elif any(kw in clean[:20].lower() for kw in ["reference", "bibliography", "참고문헌"]):
-                                        extracted_parts.append(f"\n#### References\n{clean}")
-                                    else:
-                                        extracted_parts.append(para_text)
-
-                            st.session_state[f"ocr_{page_num}"] = "\n\n".join(extracted_parts)
+                            # ✅ 개선된 고속 구조 추출 (표 포함)
+                            result_text = extract_structured_text(page)
+                            st.session_state[f"ocr_{page_num}"] = result_text
                             st.rerun()
 
-                # 결과 출력
                 if f"ocr_{page_num}" in st.session_state:
                     final_text = st.session_state[f"ocr_{page_num}"]
                     st.markdown(final_text)
@@ -247,21 +326,38 @@ if uploaded_file:
 
             c1, c2 = st.columns(2)
 
-            def safe_gen(prompt):
-                try: return model.generate_content(prompt).text
-                except Exception as e:
-                    if "429" in str(e): return "⚠️ 하루 사용량을 초과했습니다."
-                    return f"❌ 오류: {e}"
-
+            # ✅ 수정: 결과를 session_state에 저장해서 동시에 표시
             if c1.button("🌐 전문 직역 실행"):
                 if raw_input.strip():
                     with st.spinner("번역 중..."):
-                        st.info(safe_gen(f"스포츠 생체역학 전문가로서 직역하세요:\n\n{raw_input}"))
+                        st.session_state.translation_result = safe_gen(
+                            f"스포츠 생체역학 전문가로서 직역하세요:\n\n{raw_input}"
+                        )
 
             if c2.button("🧠 심층 역학 분석"):
                 if raw_input.strip():
                     with st.spinner("분석 중..."):
-                        st.success(safe_gen(f"생체역학 박사로서 상세 분석하세요:\n\n{raw_input}"))
+                        st.session_state.analysis_result = safe_gen(
+                            f"생체역학 박사로서 상세 분석하세요:\n\n{raw_input}"
+                        )
+
+            # ✅ 수정: 두 결과를 나란히 항상 표시
+            if st.session_state.translation_result or st.session_state.analysis_result:
+                st.markdown("---")
+                r1, r2 = st.columns(2)
+                with r1:
+                    if st.session_state.translation_result:
+                        st.markdown("#### 🌐 전문 직역")
+                        st.info(st.session_state.translation_result)
+                with r2:
+                    if st.session_state.analysis_result:
+                        st.markdown("#### 🧠 심층 역학 분석")
+                        st.success(st.session_state.analysis_result)
+
+                if st.button("🗑️ 결과 초기화"):
+                    st.session_state.translation_result = ""
+                    st.session_state.analysis_result = ""
+                    st.rerun()
 
             st.markdown("---")
             st.subheader("💬 데이터 및 이미지 질의응답")
@@ -309,5 +405,14 @@ if uploaded_file:
                         ans = safe_gen(contents)
                         st.session_state.chat_history.append({"role": "assistant", "content": ans})
 
-            for msg in st.session_state.chat_history:
-                with st.chat_message(msg["role"]): st.markdown(msg["content"])
+            # ✅ 수정: 채팅 답변도 항상 펼쳐서 표시
+            if st.session_state.chat_history:
+                st.markdown("---")
+                st.markdown("#### 💬 질의응답 결과")
+                for msg in st.session_state.chat_history:
+                    with st.chat_message(msg["role"]):
+                        st.markdown(msg["content"])
+
+                if st.button("🗑️ 대화 초기화"):
+                    st.session_state.chat_history = []
+                    st.rerun()
