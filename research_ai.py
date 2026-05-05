@@ -223,11 +223,51 @@ if uploaded_file:
         st.subheader("💬 데이터 및 이미지 질의응답")
 
 이미지 수정부분
-  from streamlit_paste_button import paste_image_button
+ st.markdown("### 이미지 입력")
+st.caption("💡 아래 초록 박스 클릭 → Ctrl+V 로 캡처 이미지를 붙여넣거나, 파일을 드래그하세요.")
 
-img_result = paste_image_button("📋 클립보드에서 붙여넣기")
-if img_result.image_data is not None:
-    st.image(img_result.image_data, width=300)      
+# 1) 붙여넣기 컴포넌트
+components.html(paste_html, height=220, scrolling=False)
+
+# 2) postMessage → Streamlit 값 수신 컴포넌트
+#    반환값: "data:image/png;base64,..." 문자열 또는 None
+receiver_html = """
+<script>
+  // 부모 창의 메시지를 받아 Streamlit component value로 올림
+  window.addEventListener('message', (e) => {
+    if (e.data?.type === 'PASTE_IMAGE') {
+      window.parent.postMessage({
+        type: 'streamlit:setComponentValue',
+        value: e.data.dataUrl
+      }, '*');
+    }
+  });
+</script>
+"""
+
+# streamlit-custom-component 없이 간단히 쓰려면
+# session_state 폴백: JS→URL query param→rerun 패턴 사용
+data_url = st.query_params.get("pasted_img", None)
+
+if data_url:
+    header, encoded = data_url.split(",", 1)
+    img_bytes = base64.b64decode(encoded)
+    pil_img   = Image.open(io.BytesIO(img_bytes))
+    st.image(pil_img, width=300, caption="붙여넣은 이미지")
+    # 분석에 사용할 bytes
+    data_img_bytes = img_bytes
+else:
+    # 3) 파일 업로드 폴백 (파일로 저장된 이미지용)
+    uploaded = st.file_uploader(
+        "📂 저장된 파일로 업로드 (파일 탐색기 필요 없으면 위 초록 박스 사용)",
+        type=["png", "jpg", "jpeg"],
+        label_visibility="visible"
+    )
+    if uploaded:
+        st.image(uploaded, width=300)
+        data_img_bytes = uploaded.read()
+
+        
   
         chat_query = st.text_area("질문을 입력하세요", height=100)
         if st.button("🚀 분석 전송"):
