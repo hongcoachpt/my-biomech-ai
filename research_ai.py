@@ -221,8 +221,15 @@ if uploaded_file:
 
         st.markdown("---")
         st.subheader("💬 데이터 및 이미지 질의응답")
+        # [수정됨] 캡처 후 붙여넣기 안내 문구 추가
+        st.info("💡 팁: 논문의 그래프나 표를 화면 캡처한 뒤, 아래 박스를 마우스로 클릭하고 **Ctrl+V (아이패드는 꾹 눌러서 붙여넣기)** 하시면 바로 들어갑니다!")
+        data_img = st.file_uploader("📸 사진 업로드 (클릭 후 붙여넣기 지원)", type=["png", "jpg", "jpeg"])
+        
+        if data_img: st.image(data_img, width=300)
+
         data_img = st.file_uploader("📸 사진 업로드", type=["png", "jpg", "jpeg"])
         if data_img: st.image(data_img, width=300)
+            
 
         chat_query = st.text_area("질문을 입력하세요", height=100)
         if st.button("🚀 분석 전송"):
